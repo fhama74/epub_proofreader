@@ -63,7 +63,7 @@ AIエンジンの接続先とモデルは、アプリ内の「AI検査・結果�
 
 ## ドキュメント
 
-[Docker・運用手順](docs/DOCKER.md) · [AIの設計](docs/AI.md) · [全体設計](docs/ARCHITECTURE.md) · [検証方法](docs/TESTING.md)
+[Docker・運用手順](docs/DOCKER.md)
 
 ## ライセンス
 
