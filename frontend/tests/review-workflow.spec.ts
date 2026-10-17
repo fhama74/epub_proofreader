@@ -4,7 +4,9 @@ import {newProject} from './helpers';
 test('review badge changes on confirmation/reset; touch ruby addition and removal preserve body',async({page})=>{
  await newProject(page);
  await page.getByLabel('次の段落・文',{exact:true}).click();
- const body=page.getByLabel('本文を編集',{exact:true});const text=await body.inputValue();
+ const body=page.getByLabel('本文を編集',{exact:true});
+ await expect(body).toHaveValue('今日は良い天汽だった。庭の向こうで、小さな鳥が鳴いている。');
+ const text=await body.inputValue();
  await expect(page.getByLabel('段落の校閲状態：未確定',{exact:true})).toBeVisible();
  await page.getByRole('button',{name:'確認済みにする',exact:true}).click();
  await expect(page.getByLabel('段落の校閲状態：確定済み',{exact:true})).toBeVisible();
