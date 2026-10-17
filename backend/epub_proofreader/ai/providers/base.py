@@ -26,12 +26,15 @@ def request(engine,method,path,**kwargs):
     try:
         with httpx.Client(timeout=httpx.Timeout(180,connect=10),follow_redirects=False,trust_env=False) as client:
             with client.stream(method,url,**kwargs) as response:
+                if response.status_code in {502,503,504}:raise ValueError(f'AIサービスを利用できません（HTTP {response.status_code}）。サービスの稼働状態を確認してください。')
+                if response.status_code==400:raise ValueError('AI接続先が送信内容を受け付けませんでした（HTTP 400）。モデル名・送信形式・設定を確認してください。')
                 if response.status_code>=300:raise ValueError(f"AI接続先がHTTP {response.status_code}を返しました。URL・モデル・認証を確認してください。")
                 content=bytearray()
                 for part in response.iter_bytes():
                     content.extend(part)
                     if len(content)>10*1024*1024:raise ValueError('AIの応答が大きすぎます。')
                 return json.loads(content)
-    except httpx.TimeoutException:raise ValueError('AI接続が時間切れです。サーバーの稼働とモデルの読み込み状態を確認してください。') from None
+    except (httpx.ConnectError,httpx.ConnectTimeout):raise ValueError('接続エラー：AIサービスに接続できません。サービスの起動状態・接続先・ネットワークを確認してください。') from None
+    except httpx.TimeoutException:raise ValueError('AIから応答がありません。処理の長期化、サービス停止、通信断の可能性があります。') from None
     except httpx.HTTPError:raise ValueError('AIへ接続できません。URL・ネットワーク・Tailscaleの接続を確認してください。') from None
     except json.JSONDecodeError:raise ValueError('AI接続先から不正なJSONが返りました。') from None

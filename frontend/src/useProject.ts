@@ -1,5 +1,5 @@
 import {useCallback,useRef,useState} from 'react';
-import {api} from './dialogUtils';
+import {api,APIError} from './dialogUtils';
 import type {Project} from './types';
 export type ProjectPatch=Partial<Pick<Project,'statuses'|'mappings'|'view'>> & {drafts?:Record<string,Project['drafts'][string]|null>};
 export const defaultView={fontSize:20,left:36,right:28,hidePdf:false,hideInfo:false,epubScroll:null,pdf:{followText:true,page:1,zoom:1,mode:'page' as const,scrollLeft:0,scrollTop:0}};
@@ -13,11 +13,23 @@ export default function useProject(onError:(s:string)=>void){
     setSaveState('保存中…');
     const operation=chain.current.catch(()=>{}).then(async()=>{
       if(current.current?.id!==id)throw new Error('別の書籍へ移動しました。');
-      try{const p=await api<Project>(`/api/books/${id}/project`,'PATCH',{version:current.current.project.version,...patch});if(current.current?.id===id){current.current={id,project:p};setProject(p);setSaveState('保存済み');}return p;}
+      try{
+        const base=current.current.project;let p:Project;
+        try{p=await api<Project>(`/api/books/${id}/project`,'PATCH',{version:base.version,...patch});}
+        catch(error){
+          if(!(error instanceof APIError) || error.status!==409)throw error;
+          const latest=await api<Project>(`/api/books/${id}/project`);
+          const at=(value:Project,key:string)=>((value as unknown as Record<string,Record<string,unknown>>)[key]||{});
+          const independent=Object.entries(patch).every(([key,items])=>Object.keys(items||{}).every(ident=>JSON.stringify(at(base,key)[ident])===JSON.stringify(at(latest,key)[ident]) || JSON.stringify(at(latest,key)[ident])===JSON.stringify((items as Record<string,unknown>)[ident])));
+          if(!independent)throw new Error('同じ項目が別のブラウザーで変更されています。入力はこのブラウザーに保持しています。');
+          if(current.current?.id!==id)throw new Error('別の書籍へ移動しました。');
+          p=await api<Project>(`/api/books/${id}/project`,'PATCH',{version:latest.version,...patch});
+        }
+if(current.current?.id===id){current.current={id,project:p};setProject(p);setSaveState('保存済み');}return p;}
       catch(error){setSaveState('保存失敗 — 再読み込みが必要');onError(String(error));throw error;}
     });chain.current=operation;return operation;
   },[onError]);
-  const run=useCallback(<T,>(action:()=>Promise<T>):Promise<T>=>{const result=chain.current.then(action);chain.current=result;return result;},[]);
+  const run=useCallback(<T,>(action:()=>Promise<T>):Promise<T>=>{const result=chain.current.catch(()=>{}).then(action);chain.current=result;return result;},[]);
   const flush=useCallback(async()=>{await chain.current;},[]);
   const accept=useCallback((p:Project)=>{if(!current.current)return;current.current={id:current.current.id,project:p};setProject(p);},[]);
   return {project,persist,initialize,refresh,flush,run,accept,saveState};

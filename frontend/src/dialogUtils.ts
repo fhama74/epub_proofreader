@@ -1,10 +1,5 @@
 import {useEffect,useRef,type KeyboardEvent} from 'react';
-export async function api<T>(url: string, method = 'GET', body?: unknown): Promise<T> {
-  const response = await fetch(url,{method,headers: body === undefined ? undefined : {'Content-Type':'application/json'},body: body === undefined ? undefined : JSON.stringify(body)});
-  const value = await response.json();
-  if (!response.ok) throw new Error(typeof value.detail === 'string' ? value.detail : '入力内容または保存処理を確認してください。');
-  return value as T;
-}
+export {api,APIError} from './apiClient';
 export function useDialogFocus() {
   const ref=useRef<HTMLElement>(null);
   useEffect(()=>{const previous=document.activeElement as HTMLElement | null;ref.current?.focus();return ()=>previous?.focus();},[]);

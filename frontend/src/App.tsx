@@ -1,3 +1,4 @@
+import RubyAddDialog,{type RubySelection} from './RubyAddDialog';
 import type {ReaderBookmark} from './readerBookmark';
 import {projectRightToLeft} from './projectDirection';
 import {resolveProofUnit} from './proofSelection';
@@ -28,6 +29,7 @@ export default function App(){
   const [book,setBook]=useState<Book|null>(null);const activeBook=useRef<Book|null>(null);
   const [view,setView]=useState<WorkspaceView>(defaultView);const currentView=useRef(view);currentView.current=view;
   const [pdf,setPdf]=useState<File|null>(null);const pendingPdf=useRef<File|null>(null);const [html,setHtml]=useState<string|null>(null);
+  const [rubyAdd,setRubyAdd]=useState<RubySelection|null>(null);
   const [editTarget,setEditTarget]=useState<EditorTarget|null>(null);const [dialog,setDialog]=useState<DialogKind|null>(null);const [structural,setStructural]=useState<false|'insert'|'merge'>(false);
   const [libraryOpen,setLibraryOpen]=useState(false);
   const [newProject,setNewProject]=useState(false);
@@ -40,7 +42,7 @@ export default function App(){
   const [aiHighlight,setAiHighlight]=useState<Candidate|null>(null);
   const [saving,setSaving]=useState(false);const [loading,setLoading]=useState(false);const [error,setError]=useState('');const [query,setQuery]=useState('');const [selecting,setSelecting]=useState(false);
   const input=useRef<HTMLInputElement>(null);const historyInput=useRef<HTMLInputElement>(null);const panes=useRef<HTMLDivElement>(null);const readyId=useRef<string|null>(null);
-  const reportError=useCallback((message:string)=>setError(message),[]);
+  const reportError=useCallback((message:unknown)=>setError(String(message)),[]);
   const store=useProject(reportError);const {project,persist,initialize,flush,run,accept}=store;
   const {fontSize,left,right,hidePdf,hideInfo}=view;
   const rightToLeft=projectRightToLeft(book);
@@ -50,7 +52,7 @@ export default function App(){
   const inlineCandidate=currentCandidate && paragraph && currentCandidate.paragraph_id===paragraph.id && currentCandidate.target==='text'?currentCandidate:aiResults.find(c=>c.book_id===book?.id && c.paragraph_id===paragraph?.id && c.target==='text' && !c.stale && ['pending','held'].includes(c.status) && (unit?.kind!=='sentence' || c.start>=(paragraph?.sentences[unit.sentence_index!]?.start??0) && c.end<=(paragraph?.sentences[unit.sentence_index!]?.end??0))) || null;
   const pdfSentence=aiHighlight?.paragraph_id===paragraph?.id?paragraph?.sentences.find(s=>s.start<=aiHighlight!.start && aiHighlight!.start<s.end):undefined;
   const pdfUnit=pdfSentence && unit?{...unit,kind:'sentence' as const,sentence_index:pdfSentence.index,text:pdfSentence.text}:unit;
-  const modal=!!editTarget || !!dialog || !!structural || libraryOpen || aiModal || newProject;
+  const modal=!!rubyAdd || !!editTarget || !!dialog || !!structural || libraryOpen || aiModal || newProject;
   const openBook=useCallback(async(value:Book)=>{
     setReaderRestore(null);readerPosition.current=null;setChapterLanding(null);readyId.current=null;setAIResults([]);setReaderTab('epub');setReaderEditing(false);setCurrentCandidate(null);setAiHighlight(null);setAIRequest(null);setAINavigation({previousId:null,nextId:null,count:0,index:-1});setHtml(null);setSelecting(false);setQuery('');
     let meta=await api<Project>(`/api/books/${value.id}/project`);
@@ -133,7 +135,7 @@ export default function App(){
         <div className="combined-navigation"><button disabled={!book || !aiNavigation.previousId} onClick={()=>setAIRequest({id:aiNavigation.previousId!,nonce:Date.now()})}>◀ 前のAI検知</button><button aria-label="前の段落・文" disabled={!prevAvailable} onClick={()=>navigate(-1)}>◀ 前へ</button><button aria-label="次の段落・文" disabled={!nextAvailable} onClick={()=>navigate(1)}>次へ ▶</button><button disabled={!book || !aiNavigation.nextId} onClick={()=>setAIRequest({id:aiNavigation.nextId!,nonce:Date.now()})}>次のAI検知 ▶</button></div>
         <div className="proof-position">{heading?<span aria-label="校正位置">見出し {chapter!.headings.findIndex(h=>h.id===heading.id)+1} / {chapter!.headings.length}</span>:<><span aria-label="校正位置">{unit?index+1:0} / {units.length}</span> · 段落 {unit?unit.paragraph_index+1:0} / {chapter?.paragraph_count || 0}</>}{unit?.kind==='sentence' && paragraph?` · 文 ${unit.sentence_index!+1} / ${paragraph.sentences.length}`:''}</div>
         <div className="info-scroll">
-        {book && project && paragraph && unit && <InlineEditor key={`${book.id}:${paragraph.id}:${unit.sentence_index??"all"}:${inlineCandidate?.id??"manual"}`} onDone={async(source:ProofCompletion)=>{
+        {book && project && paragraph && unit && <InlineEditor aiFlags={aiResults} onAddRuby={setRubyAdd} key={`${book.id}:${paragraph.id}:${unit.sentence_index??"all"}:${inlineCandidate?.id??"manual"}`} onDone={async(source:ProofCompletion)=>{
           if(activeBook.current?.id!==source.bookId)return;
           const fresh=await api<AIState>(`/api/books/${source.bookId}/ai`);const current=activeBook.current;if(current?.id!==source.bookId)return;setAIResults(fresh.results);
           if(readerMode){const v=currentView.current;const saved=readerRestore && readerRestore.chapterId===v.chapterId && readerRestore.paragraphId===v.paragraphId?{...readerRestore}:v.chapterId && v.paragraphId?{chapterId:v.chapterId,paragraphId:v.paragraphId,sentenceIndex:v.sentenceIndex??undefined,offset:16,scroll:readerReturnPosition.current??0}:null;setReaderRestore(saved);setView(v=>({...v,epubScroll:readerReturnPosition.current}));setReaderTab('epub');setReaderEditing(false);return;}
@@ -149,7 +151,8 @@ export default function App(){
     </div>
     {newProject && <NewProjectDialog onClose={()=>setNewProject(false)} onCreate={readFiles}/>}
     {libraryOpen && <LibraryDialog onClose={()=>setLibraryOpen(false)} onOpen={async id=>{await flush();await openBook(await api<Book>(`/api/books/${id}`));}} onDeleted={id=>{try{Object.keys(localStorage).filter(key=>key===`eproof-view:${id}` || key.startsWith(`eproof-draft:${id}:`)).forEach(key=>localStorage.removeItem(key));}catch{reportError('削除済みプロジェクトのブラウザ内保護データを削除できませんでした。');}if(activeBook.current?.id===id){readyId.current=null;setBook(null);activeBook.current=null;setPdf(null);setHtml(null);localStorage.removeItem('lastBook');localStorage.removeItem(`eproof-view:${id}`);}}}/>}
-    {book && project && editTarget && <RubyReviewDialog book={book} project={project} persist={persist} run={run} onUpdate={updateBook} target={editTarget} candidates={aiResults} onResults={setAIResults} onClose={()=>setEditTarget(null)}/>}
+    {book && project && editTarget && <RubyReviewDialog onAdd={()=>setRubyAdd({paragraphId:editTarget.paragraphId})} book={book} project={project} persist={persist} run={run} onUpdate={updateBook} target={editTarget} candidates={aiResults} onResults={setAIResults} onClose={()=>setEditTarget(null)}/>}
+    {book && rubyAdd && <RubyAddDialog book={book} target={rubyAdd} run={run} onUpdate={updateBook} onClose={()=>setRubyAdd(null)}/>}
     {book && dialog && <ProofingDialog run={run} kind={dialog} book={book} paragraphId={paragraph?.id} onUpdate={updateBook} onClose={()=>setDialog(null)}/>}
     {book && structural && paragraph && unit && <StructureDialog run={run} initialAction={structural} book={book} paragraph={paragraph} previous={chapter?.paragraphs[unit.paragraph_index-1]} onUpdate={updateBook} onClose={()=>setStructural(false)}/>}
     <footer><span className="muted" role="status" title={book?`確認済み ${checked} / ${allParagraphs.length}段落 · 要再確認 ${review}`:undefined}>{book?`${store.saveState} · 編集 ${book.edit_state.edit_count}件 · 確認済み ${checked}/${allParagraphs.length}`:'新規プロジェクトから校正を開始'}</span></footer>

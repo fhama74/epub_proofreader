@@ -4,6 +4,7 @@ from collections import defaultdict
 from difflib import SequenceMatcher
 from datetime import datetime, timezone
 import io
+import hashlib
 import copy
 import json
 import uuid
@@ -66,11 +67,15 @@ def ruby_limits(item):
     range_editable=simple_ruby(node) and layout(node)[0]==(target.text or '')
     return {'range_min':start-len(left),'range_max':end+len(right),'range_editable':range_editable}
 
-def paragraph_details(book, paragraph_id, revision):
+def paragraph_details(book, paragraph_id, revision, *, include_tokens=True):
     chapter, record, _, pieces, text = text_layout(book, paragraph_id)
     _,_,ruby_ranges=layout(locate_paragraph(book,paragraph_id)[2])
     rubies=[{**ruby,'index':index,'start':ruby_ranges[index][1],'end':ruby_ranges[index][2],**ruby_limits(ruby_ranges[index])} for index,ruby in enumerate(record['rubies'])]
-    return {**record, 'rubies':rubies, 'path': chapter['path'], 'revision': revision, 'editor_text': text, 'protected_ranges': [{'start': p['start'], 'end': p['end']} for p in pieces if p['protected']]}
+    tokens={}
+    if include_tokens:
+        tokens['token']=hashlib.sha256(etree.tostring(locate_paragraph(book,paragraph_id)[2],method='c14n',with_comments=True)).hexdigest()
+        tokens['chapter_token']=hashlib.sha256(etree.tostring(book.trees[chapter['path']],method='c14n',with_comments=True)+json.dumps([p['id'] for p in chapter['paragraphs']]).encode()).hexdigest()
+    return {**record, **tokens,'rubies':rubies, 'path': chapter['path'], 'revision': revision, 'editor_text': text, 'protected_ranges': [{'start': p['start'], 'end': p['end']} for p in pieces if p['protected']]}
 
 def text_changes(book, paragraph_id, after, span=None):
     chapter, _, _, pieces, full_before = text_layout(book, paragraph_id)
@@ -245,7 +250,7 @@ def working_model(value):
     return cached_model(source,json.dumps(value.get('ids',{}),sort_keys=True))
 
 def edit_info(value):
-    return {'revision':value['revision'], 'can_undo':value['cursor'] > 0, 'can_redo':value['cursor'] < len(value['commands']), 'edit_count':value['cursor'], 'history_count':len(value['history'])}
+    return {'revision':value['revision'], 'can_undo':value['cursor'] > 0 and value['commands'][value['cursor']-1].get('undoable',True), 'can_redo':value['cursor'] < len(value['commands']), 'edit_count':value['cursor'], 'history_count':len(value['history'])}
 
 def save_state(con, book_id, value):
     base=value['working'].base if isinstance(value['working'],WorkingFiles) else value['working']
@@ -260,17 +265,24 @@ def save_state(con, book_id, value):
     for path,content in desired.items():
         if existing.get(path)!=content:con.execute('INSERT INTO editing_files VALUES (?,?,?) ON CONFLICT(book_id,path) DO UPDATE SET content=excluded.content',(book_id,path,content))
 
-def commit_edit(con, book_id, revision, kind, paragraph_id=None, text=None, ruby_index=None, base=None, reading=None, reason='手動校正', target=None, replacement=None, sentence_index=None, expected_sentence=None, position='after', offset=None, rubies=None, source='manual', candidate_id=None, engine_id=None, span_start=None, span_end=None, expected_span=None, range_start=None, range_end=None):
+def commit_edit(con, book_id, revision, kind, paragraph_id=None, text=None, ruby_index=None, base=None, reading=None, reason='手動校正', target=None, replacement=None, sentence_index=None, expected_sentence=None, position='after', offset=None, rubies=None, source='manual', candidate_id=None, engine_id=None, span_start=None, span_end=None, expected_span=None, range_start=None, range_end=None, expected_token=None, expected_chapter_token=None):
     value = state(con,book_id)
-    if value['revision'] != revision:
-        raise EditConflict('別の画面で編集されています。最新の内容を再読み込みしてください。')
     book = working_model(value)
+    granular=False
+    if paragraph_id and (expected_token or expected_chapter_token):
+        current=paragraph_details(book,paragraph_id,value['revision'])
+        if expected_token and current['token']!=expected_token:raise EditConflict('この段落は別のブラウザーで変更されています。入力は保持しています。最新版を確認してください。')
+        if expected_chapter_token and current['chapter_token']!=expected_chapter_token:raise EditConflict('この章の内容・構造が変更されています。入力は保持しています。章を再読み込みしてください。')
+        granular=kind in {'text','sentence','ruby','combined','ruby_add','ruby_delete'} and bool(expected_token) or kind in {'insert','split','merge'} and bool(expected_chapter_token)
+    if value['revision']!=revision and (not granular or revision>value['revision']):
+        raise EditConflict('別の画面で編集されています。入力は保持しています。最新の内容を再読み込みしてください。')
     if kind in {'undo','redo'}:
         reverse = kind == 'undo'
         index = value['cursor']-1 if reverse else value['cursor']
         if index < 0 or index >= len(value['commands']):
             raise EpubError('元に戻す・やり直す操作がありません。')
         command = value['commands'][index]
+        if not command.get('undoable',True):raise EditConflict('ルビの追加・削除はUndo／Redoの対象外です。その操作より前には戻せません。')
         if 'snapshot' in command:
             from .structure import decoded
             snapshot=command['snapshot']
@@ -287,7 +299,12 @@ def commit_edit(con, book_id, revision, kind, paragraph_id=None, text=None, ruby
         value['history'].append({'id':str(uuid.uuid4()),'timestamp':timestamp(),'action':kind,'command_id':command['id'],'paragraph_ids':command['paragraph_ids'],'before':command['after'] if reverse else command['before'],'after':command['before'] if reverse else command['after'],'source':'manual','state':'undone' if reverse else 'approved','reason':reason})
     else:
         snapshot=None
-        if kind in {'insert','split','merge'}:
+        ruby_options=None
+        if kind in {'ruby_add','ruby_delete'}:
+            from .ruby_structure import operate as ruby_operate
+            value['working'],snapshot,paragraphs,before,after,focus,ruby_options=ruby_operate(book,paragraph_id,kind,range_start,range_end,reading,ruby_index)
+            value['focus_id']=focus;changes=[]
+        elif kind in {'insert','split','merge'}:
             from .structure import operate
             value['working'],snapshot,paragraphs,before,after,focus=operate(book,paragraph_id,kind,position=position,text=text or '',offset=offset)
             value['ids'][snapshot['chapter_id']]=snapshot['ids_after']
@@ -362,6 +379,7 @@ def commit_edit(con, book_id, revision, kind, paragraph_id=None, text=None, ruby
             return value
         if snapshot is None:value['working'] = apply_changes(book,changes)
         command = {'id':str(uuid.uuid4()), 'timestamp':timestamp(), 'action':kind, 'changes':changes, 'paragraph_ids':paragraphs, 'before':before, 'after':after, 'source':source, 'state':'approved', 'reason':reason}
+        if ruby_options is not None:command.update(undoable=False,ruby_options=ruby_options)
         if candidate_id:command.update(candidate_id=candidate_id,engine_id=engine_id)
         if snapshot is not None:command['snapshot']=snapshot
         value['commands'] = value['commands'][:value['cursor']] + [command]

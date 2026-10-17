@@ -101,9 +101,9 @@ def test_metadata_conflict_validation_and_invalidation(session):
     assert client.patch(root+'/project',json={'version':meta['version'],'mappings':{P2:[{'page':1,'rectangle':[.9,.1,.2,.8],'pdf_sha256':'0'*64}]}}).status_code==422
     assert project(client,root)['version']==meta['version']
     edit(client,root,P2,details(client,root)['editor_text']+'変更。')
-    assert project(client,root)['statuses'][P2]=='review'
-    assert client.get(root).json()['chapters'][0]['paragraphs'][1]['status']=='review'
-    assert project(client,root)['progress']['review']==1
+    assert project(client,root)['statuses'][P2]=='human_checked'
+    assert client.get(root).json()['chapters'][0]['paragraphs'][1]['status']=='human_checked'
+    assert project(client,root)['progress']['human_checked']==1
 
 def test_sentence_combined_edit_keeps_rubies_outside_sentence(session):
     from test_epub import changed

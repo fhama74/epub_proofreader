@@ -36,9 +36,9 @@ def state(con,book_id):
             if book is None:book,hashes=evidence(value['working'],json.dumps(value['ids'],sort_keys=True))
             pid=r['paragraph_id']
             if pid not in hashes:
-                try:hashes[pid]=fingerprint(editing.paragraph_details(book,pid,value['revision']))
+                try:hashes[pid]=fingerprint(editing.paragraph_details(book,pid,value['revision'],include_tokens=False))
                 except ValueError:hashes[pid]=None
-            r['stale']=r['source_hash']!=hashes[pid]
+            r['stale']=r['source_hash']!=hashes[pid] or r['target']=='text' and not 1<=len(r['original'])<=2
         else:r['stale']=False
         results.append(r)
     for j in result_jobs:
@@ -102,8 +102,14 @@ def install(app,database,load_book,snapshot,data_dir):
     @app.post('/api/books/{book_id}/ai/jobs')
     def start(book_id:str,req:Start):
         load_book(book_id)
+        # Build paragraph snapshots and estimates without holding the write lock.
+        # Recheck revision/engine settings when publishing the prepared job.
         with database() as con:
-            con.execute('BEGIN IMMEDIATE');ident=jobs.start(con,book_id,req)
+            prior=con.execute('SELECT id FROM ai_jobs WHERE book_id=? AND request_id=?',(book_id,req.request_id)).fetchone()
+            if prior:return {'job_id':prior[0]}
+            prepared=jobs.prepare(con,book_id,req)
+        with database() as con:
+            con.execute('BEGIN IMMEDIATE');ident=jobs.start(con,book_id,req,prepared=prepared)
         return {'job_id':ident}
     @app.post('/api/books/{book_id}/ai/jobs/{ident}/{action}')
     def control(book_id:str,ident:str,action:str,req:BudgetChange|None=None):
@@ -128,14 +134,7 @@ def install(app,database,load_book,snapshot,data_dir):
             con.execute('BEGIN IMMEDIATE')
             if con.execute("SELECT 1 FROM ai_jobs WHERE book_id=? AND owner_id=? AND status IN ('queued','running','pause_requested')",(book_id,em.OWNER)).fetchone():
                 raise HTTPException(409,'AI校正を一時停止または中止してから、検出結果をクリアしてください。')
-            con.execute('INSERT OR IGNORE INTO ai_cleared_results SELECT id FROM ai_results WHERE book_id=? AND owner_id=?',(book_id,em.OWNER))
-        return {'ok':True}
-    @app.post('/api/books/{book_id}/ai/results/restore')
-    def restore_results(book_id:str):
-        load_book(book_id)
-        with database() as con:
-            con.execute('BEGIN IMMEDIATE')
-            con.execute('DELETE FROM ai_cleared_results WHERE result_id IN (SELECT id FROM ai_results WHERE book_id=? AND owner_id=?)',(book_id,em.OWNER))
+            con.execute('DELETE FROM ai_results WHERE book_id=? AND owner_id=?',(book_id,em.OWNER))
         return {'ok':True}
     @app.get('/api/books/{book_id}/ai/events')
     async def events(book_id:str,request:Request):
@@ -167,14 +166,16 @@ def install(app,database,load_book,snapshot,data_dir):
             if req.action=='approve':
                 if row['command_id']:raise HTTPException(409,'この候補は編集履歴にあります。Redoまたは再検査を使用してください。')
                 book=editing.working_model(value);d=editing.paragraph_details(book,row['paragraph_id'],value['revision']);s=json.loads(row['data'])
+                if s.get('match_count',1)>1:raise HTTPException(409,'同じ文に複数の一致箇所があります。原本と照合し、編集欄で修正してください。')
                 if s['replacement'] is None:raise HTTPException(409,'修正案がない要確認箇所です。手動編集で確認してください。')
                 if fingerprint(d)!=row['source_hash']:raise HTTPException(409,'AI検査後に本文・ルビが変更されています。再検査または手動編集で確認してください。')
                 if d['editor_text'][s['start']:s['end']]!=s['original']:raise HTTPException(409,'対象文字列が一致しません。')
                 kwargs={'paragraph_id':row['paragraph_id'],'reason':s['reason'],'source':'ai','candidate_id':ident,'engine_id':row['engine_id']}
                 if s['target']=='ruby':kwargs.update(ruby_index=s['ruby_index'],base=s['base_after'],reading=s['reading_after']);kind='ruby'
                 else:kwargs.update(text=s['replacement'],span_start=s['start'],span_end=s['end'],expected_span=s['original']);kind='text'
-                value=editing.commit_edit(con,book_id,req.revision,kind,**kwargs)
-                if value['revision']==req.revision:raise HTTPException(409,'対象は既に修正済みです。')
+                before_revision=value['revision']
+                value=editing.commit_edit(con,book_id,req.revision,kind,expected_token=d['token'],**kwargs)
+                if value['revision']==before_revision:raise HTTPException(409,'対象は既に修正済みです。')
                 command=value['commands'][value['cursor']-1]['id'];projects.invalidate(con,book_id,value)
                 con.execute("UPDATE ai_results SET status='approved',command_id=?,updated_at=? WHERE id=?",(command,editing.timestamp(),ident))
                 # Disjoint candidates in the same paragraph can safely follow a known approved edit.
@@ -186,8 +187,19 @@ def install(app,database,load_book,snapshot,data_dir):
                     else:continue
                     if new['editor_text'][o['start']:o['end']]!=o['original']:continue
                     con.execute('UPDATE ai_results SET data=?,source_hash=? WHERE id=?',(json.dumps(o,ensure_ascii=False,sort_keys=True),newhash,other['id']))
+                from .. import reviews
+                index=s.get('ruby_index') if s['target']=='ruby' else next((x['index'] for x in new['sentences'] if x['start']<=s['start']<x['end']),None) if new['unit_mode']=='sentence' else None
+                reviews.mark(con,book_id,row['paragraph_id'],'ruby' if s['target']=='ruby' else 'body',index)
                 result=snapshot(book_id,value,projects.read(con,book_id),library.info(con,book_id))
             else:
                 con.execute('UPDATE ai_results SET status=?,updated_at=? WHERE id=?',('rejected' if req.action=='reject' else 'reviewed' if req.action=='confirm' else 'held',editing.timestamp(),ident));result=None
+                if req.action=='confirm':
+                    from .. import reviews
+                    try:d=editing.paragraph_details(editing.working_model(value),row['paragraph_id'],value['revision'])
+                    except ValueError:d=None
+                    if d is not None and fingerprint(d)==row['source_hash']:
+                        s=json.loads(row['data']);index=s.get('ruby_index') if s['target']=='ruby' else next((x['index'] for x in d['sentences'] if x['start']<=s['start']<x['end']),None) if d['unit_mode']=='sentence' else None
+                        reviews.mark(con,book_id,row['paragraph_id'],'ruby' if s['target']=='ruby' else 'body',index)
+                        result=snapshot(book_id,value,projects.read(con,book_id),library.info(con,book_id))
             con.execute('INSERT INTO ai_decisions VALUES (?,?,?,?,?)',(str(uuid4()),ident,em.OWNER,req.action,editing.timestamp()))
         return {'book':result}

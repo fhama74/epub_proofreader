@@ -9,7 +9,7 @@ from test_ai import mock_ai,job,finish,state
 def paragraph():
     return {'paragraph_id':'p','text':'猫は天汽。','rubies':[{'index':0,'base':'猫','readings':['ねこ'],'start':0,'end':1,'editable':True}],'previous':'前の文','next':'次の文'}
 def response(items):return json.dumps({'paragraph_id':'p','suggestions':items},ensure_ascii=False)
-def body(**patch):return {'unit_id':0,'original':'天汽','replacement':'天気','reason':'OCR誤認識','category':'kanji','confidence':.8,**patch}
+def body(**patch):return {'start':3,'original':'汽','replacement':'気','reason':'OCR誤認識','category':'kanji','confidence':.8,**patch}
 def ruby(**patch):return {'ruby_index':0,'base_after':None,'reading_after':'ネコ','reason':'読みを確認','confidence':.8,**patch}
 
 def test_queries_and_schemas_are_separate_and_omit_redundant_fields():
@@ -22,21 +22,20 @@ def test_queries_and_schemas_are_separate_and_omit_redundant_fields():
 
 def test_body_proposal_and_detection_only_both_locate_server_owned_text():
     p=paragraph();q=next(queries.queries(p,1200))
-    values,issues=queries.assess(response([body(),body(original=None,replacement=None)]),p,q)
+    values,issues=queries.assess(response([body(),body(replacement=None)]),p,q)
     assert not issues and len(values)==2
     assert values[0]['original']=='汽' and values[0]['replacement']=='気' and values[0]['start']==3
-    assert values[1]['original']==p['text'] and values[1]['replacement'] is None
+    assert values[1]['original']=='汽' and values[1]['replacement'] is None
 
-def test_bad_proposal_is_retained_only_as_inspection_not_applied():
+def test_bad_proposal_is_rejected_without_sentence_fallback():
     p=paragraph();q=next(queries.queries(p,1200))
-    values,issues=queries.assess(response([body(original='本文にない文字列')]),p,q)
-    assert not issues and values[0]['replacement'] is None and values[0]['original']==p['text'] and values[0]['proposal_note']
-    values,issues=queries.assess(response([body(unit_id=999)]),p,q);assert not values and issues
+    for candidate in [body(original='本文にない文字列'),body(start=None),body(start=2),body(unit_id=999)]:
+        values,issues=queries.assess(response([candidate]),p,q);assert not values and issues
 
-def test_body_can_propose_base_change_without_inventing_reading():
-    p=paragraph();q=next(queries.queries(p,1200));values,issues=queries.assess(response([body(original='猫',replacement='犬')]),p,q)
-    assert not issues and values[0]['target']=='ruby' and values[0]['base_after']=='犬' and values[0]['reading_after']=='ねこ'
-    assert values[0]['query_type']=='body'
+def test_body_on_ruby_base_stays_short_and_manual():
+    p=paragraph();q=next(queries.queries(p,1200));values,issues=queries.assess(response([body(start=0,original='猫',replacement='犬')]),p,q)
+    assert not issues and values[0]['target']=='text' and values[0]['original']=='猫'
+    assert values[0]['replacement'] is None and values[0]['proposal_note']
 
 def test_ruby_reading_only_and_detection_only_require_no_duplicate_replacement():
     p=paragraph();q=list(queries.queries(p,1200))[1]
@@ -55,7 +54,7 @@ def test_native_body_detection_confirm_and_backup(session,mock_ai,monkeypatch):
     c,create=session;root=create()
     def generate(e,s,prompt):
         q=json.loads(prompt);assert q['query_type']=='body';assert 'rubies' not in q
-        return Reply(json.dumps({'paragraph_id':q['paragraph_id'],'suggestions':[body(original=None,replacement=None)]}),10,10)
+        return Reply(json.dumps({'paragraph_id':q['paragraph_id'],'suggestions':[body(start=6,replacement=None)]}),10,10)
     monkeypatch.setattr(PROVIDERS['ollama'],'generate',generate);ident=job(c,root);finish(ident);v=state(c,root);candidate=v['results'][0]
     assert v['jobs'][0]['status']=='completed' and candidate['replacement'] is None
     url=root+f"/ai/results/{candidate['id']}/decision"
@@ -95,14 +94,15 @@ def test_confirm_proposal_preserves_source_and_does_not_create_edit(session,mock
     original=details(c,root,pid)
     def generate(e,s,prompt):
         q=json.loads(prompt)
-        suggestion=body(original='天汽',replacement='天気') if target=='body' else ruby(reading_after='ワガハイ')
+        suggestion=body(start=6) if target=='body' else ruby(reading_after='ワガハイ')
         return Reply(json.dumps({'paragraph_id':q['paragraph_id'],'suggestions':[suggestion] if q['query_type']==target else []}),10,10)
     monkeypatch.setattr(PROVIDERS['ollama'],'generate',generate)
     ident=job(c,root,paragraph_id=pid);finish(ident)
     candidate=state(c,root)['results'][0];assert candidate['replacement'] is not None
     result=c.post(root+f"/ai/results/{candidate['id']}/decision",json={'action':'confirm','revision':0})
-    assert result.status_code==200 and result.json()['book'] is None
-    assert details(c,root,pid)==original
+    assert result.status_code==200 and result.json()['book']['id']==root.rsplit('/',1)[1]
+    after=details(c,root,pid);assert after['editor_text']==original['editor_text'] and after['rubies']==original['rubies']
+    assert after['review_state'][target]['confirmed']
     assert state(c,root)['results'][0]['status']=='reviewed'
     assert c.get(root).json()['edit_state']['revision']==0
 
@@ -122,11 +122,11 @@ def test_compact_body_uses_verified_position_for_repeated_text():
     p={**paragraph(),'text':'天汽と天汽。','rubies':[]};q=next(queries.queries(p,1200))
     compact={'unit_id':0,'start':3,'original':'天汽','replacement':'天気'}
     values,issues=queries.assess(response([compact]),p,q)
-    assert not issues and values[0]['start']==4 and values[0]['replacement']=='気'
+    assert not issues and values[0]['start']==3 and values[0]['original']=='天汽' and values[0]['replacement']=='天気'
     assert values[0]['reason'] and values[0]['category']=='unnatural'
     for bad in [None,2,999]:
         values,issues=queries.assess(response([{**compact,'start':bad}]),p,q)
-        assert not issues and values[0]['replacement'] is None
+        assert not values and issues
     values,issues=queries.assess(response([{**compact,'start':-1}]),p,q)
     assert not values and issues
 
@@ -136,7 +136,7 @@ def test_compact_batch_ruby_and_detection_only_are_saved(session,monkeypatch):
     c,create=session;root=create()
     def generate(cfg,system,prompt):
         q=json.loads(prompt);p=q['paragraphs'][0]
-        findings=([{'paragraph_id':p['paragraph_id'],'unit_id':p['units'][0]['unit_id'],'start':None,'original':None,'replacement':None}]
+        findings=([{'i':p['units'][0]['i'],'o':p['units'][0]['text'][0],'r':None}]
                   if q['query_type']=='body' else [{'paragraph_id':p['paragraph_id'],'ruby_index':p['rubies'][0]['ruby_index'],'base_after':None,'reading_after':None}])
         return Reply(json.dumps({'findings':findings}),10,5)
     monkeypatch.setattr(PROVIDERS['ollama'],'generate',generate)

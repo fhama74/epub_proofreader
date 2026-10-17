@@ -9,7 +9,7 @@ SCHEMA=1
 MAX_PROJECT=512*1024*1024
 STATUSES={'unchecked','ai_checked','human_checked','review'}
 
-def fresh():return {'schema_version':SCHEMA,'version':0,'statuses':{},'mappings':{},'drafts':{},'view':{},'candidates':[],'pdf':None}
+def fresh():return {'schema_version':SCHEMA,'version':0,'statuses':{},'reviews':{},'mappings':{},'drafts':{},'view':{},'candidates':[],'pdf':None}
 def read(con,book_id):
     row=con.execute('SELECT metadata FROM projects WHERE book_id=?',(book_id,)).fetchone()
     return json.loads(row[0]) if row else fresh()
@@ -24,10 +24,14 @@ def validate_metadata(meta,book,pdf=None):
     result=fresh()
     if type(meta.get('version')) is not int or meta['version']<0:raise EpubError('プロジェクトの版番号が不正です。')
     result['version']=meta['version']
-    for key in ('statuses','mappings','drafts','view'):
+    for key in ('statuses','mappings','drafts','view','reviews'):
         if not isinstance(meta.get(key,{}),dict):raise EpubError(f'{key}の形式が不正です。')
         result[key]=copy.deepcopy(meta.get(key,{}))
     if len(json.dumps(result,ensure_ascii=False))>4*1024*1024:raise EpubError('プロジェクト設定・未保存入力が大きすぎます。')
+    for pid,targets in result['reviews'].items():
+        if not isinstance(pid,str) or len(pid)>128 or not isinstance(targets,dict) or set(targets)-{'body','ruby'}:raise EpubError('校閲状態が不正です。')
+        for marks in targets.values():
+            if not isinstance(marks,dict) or len(marks)>20000 or any(not isinstance(k,str) or len(k)>20 or not isinstance(v,str) or len(v)!=64 or any(c not in '0123456789abcdef' for c in v) for k,v in marks.items()):raise EpubError('校閲状態が不正です。')
     for pid,status in result['statuses'].items():
         if not isinstance(pid,str) or len(pid)>128 or not isinstance(status,str) or status not in STATUSES:raise EpubError('確認状態が不正です。')
     for pid,items in result['mappings'].items():
@@ -84,14 +88,26 @@ def validate_metadata(meta,book,pdf=None):
 def progress(book,meta):
     counts={key:0 for key in STATUSES}
     for chapter in book.chapters:
-        for paragraph in chapter['paragraphs']:counts[meta['statuses'].get(paragraph['id'],'unchecked')]+=1
+        for paragraph in chapter['paragraphs']:
+            from . import reviews
+            status='human_checked' if reviews.summary(meta,reviews.record_details(paragraph))['confirmed'] else meta['statuses'].get(paragraph['id'],'unchecked')
+            if status=='human_checked' and not reviews.summary(meta,reviews.record_details(paragraph))['confirmed']:status='review'
+            counts[status]+=1
     total=sum(counts.values())
     return {**counts,'total':total,'percent':round(100*counts['human_checked']/total,1) if total else 0}
 
 def invalidate(con,book_id,value):
     if not value['history']:return
     meta=read(con,book_id);event=value['history'][-1];changed=False
+    if event['action'] in {'split','merge','undo','redo'}:
+        for pid in event['paragraph_ids']:
+            if pid in meta.get('reviews',{}):meta['reviews'].pop(pid);changed=True
+    book=editing.working_model(value);live={p['id'] for c in book.chapters for p in [*c['paragraphs'],*c.get('headings',[])]}
+    for key in ('statuses','reviews'):
+        for pid in list(meta.get(key,{})):
+            if pid not in live:meta[key].pop(pid);changed=True
     for pid in event['paragraph_ids']:
+        if event['action']=='insert' and pid in meta['statuses']:continue
         if meta['statuses'].get(pid,'unchecked')!='unchecked':meta['statuses'][pid]='review';changed=True
     if event['action']=='split' and len(event['paragraph_ids'])==2:
         old,new=event['paragraph_ids']
@@ -126,7 +142,14 @@ def replay(original,state):
         command_ids.add(command['id']);kind=command.get('action');pids=command.get('paragraph_ids')
         if not isinstance(pids,list) or not pids:raise EpubError('履歴の段落指定が不正です。')
         book=editing.working_model(value);changes=[]
-        if kind in {'insert','split','merge'}:
+        if kind in {'ruby_add','ruby_delete'}:
+            from .ruby_structure import operate as ruby_operate
+            options=command.get('ruby_options',{})
+            rebuilt,expected,affected,before,after,focus,_=ruby_operate(book,pids[0],kind,**options)
+            if expected!=command.get('snapshot') or before!=command['before'] or after!=command['after'] or command.get('undoable') is not False:raise EpubError('ルビ操作の履歴が一致しません。')
+            if number>=cursor:raise EpubError('取り消せないルビ操作より前のUndo位置は指定できません。')
+            value['working']=rebuilt
+        elif kind in {'insert','split','merge'}:
             snap=command.get('snapshot',{});pid=pids[0]
             if kind=='merge':pid=pids[1]
             options={}
@@ -173,7 +196,7 @@ def replay(original,state):
         editing.working_model(value)
         if number+1==cursor:at_cursor=copy.deepcopy(value)
     for event in history:
-        if not isinstance(event,dict) or event.get('action') not in {'text','sentence','ruby','combined','replace','insert','split','merge','undo','redo'} or not isinstance(event.get('id'),str):raise EpubError('操作履歴の形式が不正です。')
+        if not isinstance(event,dict) or event.get('action') not in {'text','sentence','ruby','combined','replace','insert','split','merge','ruby_add','ruby_delete','undo','redo'} or not isinstance(event.get('id'),str):raise EpubError('操作履歴の形式が不正です。')
     result={**copy.deepcopy(state),**at_cursor}
     actual=editing.working_model(result)
     supplied=Book(result['working']).apply_ids(state.get('ids',{}))

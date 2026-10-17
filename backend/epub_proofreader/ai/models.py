@@ -32,6 +32,7 @@ class Engine(BaseModel):
     chunk_chars:int=Field(default=1200,ge=200,le=4000)
     max_output_tokens:int=Field(default=2048,ge=256,le=8192)
 class Start(BaseModel):
+    skip_confirmed:bool=True
     batch_paragraphs:int=Field(default=1,ge=1,le=8)
     engine_id:str
     scope:Literal['paragraph','chapter','book']
@@ -43,5 +44,7 @@ class Start(BaseModel):
     budget:float|None=Field(default=None,gt=0,le=10000)
 
 class StoredSuggestion(Suggestion):
+    match_count:int=Field(default=1,ge=1)
+    suggested_replacement:str|None=Field(default=None,max_length=4000)
     query_type:Literal["body","ruby"]|None=None
     proposal_note:str|None=Field(default=None,max_length=500)

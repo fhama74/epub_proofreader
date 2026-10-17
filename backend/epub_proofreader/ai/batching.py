@@ -59,10 +59,20 @@ def pack(kind,members):
 
 def system(q,policy=None):return single.system(q,policy)
 
-def output_schema(q):return (BodyResult if q['query_type']=='body' else RubyResult).model_json_schema()
+def output_schema(q):
+    if q['query_type']=='body':
+        from .body import Result
+        return Result.model_json_schema()
+    return RubyResult.model_json_schema()
 
 
 def assess(reply,q):
+    if q['query_type']=='body':
+        try:decoded=json.loads(reply)
+        except (ValueError,TypeError):decoded=None
+        if isinstance(decoded,dict) and isinstance(decoded.get('findings'),list) and (not decoded['findings'] or any(isinstance(r,dict) and ('i' in r or 'o' in r) for r in decoded['findings'])):
+            from .body import assess as assess_body
+            return assess_body(reply,q['_members'][0][0],q)
     members={p['paragraph_id']:(p,part) for p,part in q['_members']};accepted=[];issues={}
     try:response=Envelope.model_validate_json(reply)
     except ValidationError:raise ValueError('まとめ検査のJSON構造が不正です。findings配列だけを返してください。') from None
@@ -76,6 +86,9 @@ def assess(reply,q):
             value=model.model_validate(raw);p,part=members[pid]
             finding=single.body_finding(value,p,part) if q['query_type']=='body' else single.ruby_finding(value,p,part)
             if finding is not None:accepted.append({**finding,'_paragraph_id':pid})
-        except ValidationError:issues.setdefault(pid,[]).append(f'候補{i+1}: フィールド・型が不正です。')
+        except ValidationError as exc:issues.setdefault(pid,[]).append(f'候補{i+1}: {single.validation_feedback(exc,q["query_type"])}')
         except ValueError as exc:issues.setdefault(pid,[]).append(f'候補{i+1}: {exc}')
+    accepted,bad=single.short_findings(accepted)
+    if bad:
+        for pid in members:issues.setdefault(pid,[]).append('連続3文字以上の指摘は採用しません。')
     return accepted,issues

@@ -14,7 +14,7 @@ def payloads(book,ids):
     allp=[(c,p) for c in book.chapters for p in c['paragraphs']];items=[]
     for i,(c,p) in enumerate(allp):
         if p['id'] not in ids:continue
-        d=editing.paragraph_details(book,p['id'],0)
+        d=editing.paragraph_details(book,p['id'],0,include_tokens=False)
         items.append({'paragraph_id':p['id'],'chapter_id':c['id'],'text':d['editor_text'],'rubies':d['rubies'],'source_hash':fingerprint(d),'previous':allp[i-1][1]['text'][-600:] if i else '', 'next':allp[i+1][1]['text'][:600] if i+1<len(allp) else ''})
     return items
 

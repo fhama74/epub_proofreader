@@ -8,10 +8,10 @@
   ],
   "engines": [
     {
-      "name": "Local Ollama Qwen3 14B",
+      "name": "Local Ollama Gemma 4 12B",
       "provider": "ollama",
       "url": "http://localhost:11434",
-      "model": "qwen3:14b",
+      "model": "gemma4:12b",
       "is_default": true
     }
   ]

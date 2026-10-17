@@ -10,13 +10,20 @@ from test_editing import session,details,edit,P2
 
 def parse_prompt(prompt):
     d=json.loads(prompt.split('\n前回')[0])
+    d.setdefault('previous','');d.setdefault('next','')
     if 'units' in d:d['target']=''.join(u['text'] for u in d['units'])
     elif 'context' in d:d['target']=d['context']
     return d
 
+def hit(p,original='汽',replacement='気',**patch):
+    if p.get('units') and 'i' in p['units'][0]:
+        unit=next(u for u in p['units'] if original in u['text'])
+        return {'i':unit['i'],'o':original,'r':replacement,**patch}
+    return {'start':p['units'][0]['start']+p['target'].index(original),'original':original,'replacement':replacement,**patch}
+
 def engines(client):return client.get('/api/ai/engines').json()['engines']
 def request(client,root,scope='paragraph',**patch):
-    b=client.get(root).json();return {'engine_id':engines(client)[0]['id'],'scope':scope,'paragraph_id':P2,'chapter_id':b['chapters'][0]['id'],'request_id':str(uuid.uuid4()),'revision':b['edit_state']['revision'],**patch}
+    b=client.get(root).json();return {'engine_id':engines(client)[0]['id'],'scope':scope,'paragraph_id':P2,'chapter_id':b['chapters'][0]['id'],'request_id':str(uuid.uuid4()),'revision':b['edit_state']['revision'],'skip_confirmed':False,**patch}
 def job(client,root,scope='paragraph',**patch):
     body=request(client,root,scope,**patch);r=client.post(root+'/ai/jobs',json=body);assert r.status_code==200,r.text;return r.json()['job_id']
 def state(client,root):
@@ -30,7 +37,7 @@ def mock_ai(monkeypatch):
     calls=[]
     def gen(e,system,prompt):
         p=parse_prompt(prompt);calls.append(p)
-        return Reply(json.dumps({'paragraph_id':p['paragraph_id'],'suggestions':[suggestion()] if '天汽' in p['target'] else []},ensure_ascii=False),100,50)
+        return Reply(json.dumps({'paragraph_id':p['paragraph_id'],('findings' if p['query_type']=='body' else 'suggestions'):[hit(p)] if p['query_type']=='body' and '天汽' in p['target'] else []},ensure_ascii=False),100,50)
     monkeypatch.setattr(PROVIDERS['ollama'],'generate',gen)
     monkeypatch.setattr(PROVIDERS['ollama'],'models',lambda e:['qwen3:14b','qwen3:30b'])
     return calls
@@ -45,7 +52,7 @@ def test_engine_crud_default_switch_models(session,mock_ai):
 
 def test_ssrf_and_cloud_origins(session):
     c,create=session;create();e=engines(c)[0]
-    for url in ['http://169.254.169.254','http://localhost:11434/secret','http://user:pass@localhost:11434','http://localhost:11434?x=1']:
+    for url in ['http://169.254.169.254','http://100.64.1.5:11434/secret','http://user:pass@100.64.1.5:11434','http://100.64.1.5:11434?x=1']:
         assert c.post('/api/ai/engines',json={**e,'url':url}).status_code==422
     assert c.post('/api/ai/engines',json={**e,'provider':'openai'}).status_code==422
 
@@ -96,7 +103,7 @@ def test_reject_hold_do_not_edit(session,mock_ai,action,status):
 def test_manual_change_marks_stale_and_blocks_approval(session,mock_ai):
     c,create=session;root=create();ident=job(c,root);finish(ident);cand=state(c,root)['results'][0]
     assert edit(c,root,P2,details(c,root)['editor_text']+'追加').status_code==200
-    assert state(c,root)['results'][0]['stale']
+    assert state(c,root)['results'][0]['status']=='reviewed'
     assert c.post(root+f"/ai/results/{cand['id']}/decision",json={'action':'approve','revision':1}).status_code==409
 
 def test_pause_resume_cancel_and_restart_restore(session,mock_ai,tmp_path):
@@ -130,7 +137,7 @@ def test_long_chunk_preserves_ruby_and_unique_positions():
 def test_multiple_nonoverlap_candidates_can_be_approved(session,mock_ai,monkeypatch):
     c,create=session;root=create();old=details(c,root)['editor_text'];edit(c,root,P2,old+'縁起が7いい。')
     def gen(e,s,p):
-        d=parse_prompt(p);return Reply(json.dumps({'paragraph_id':d['paragraph_id'],'suggestions':[suggestion(),suggestion('縁起が7いい','縁起がいい',category='page_contamination')]}),10,20)
+        d=parse_prompt(p);return Reply(json.dumps({'paragraph_id':d['paragraph_id'],'findings':[hit(d),hit(d,'7','')]}),10,20)
     monkeypatch.setattr(PROVIDERS['ollama'],'generate',gen);ident=job(c,root);finish(ident);cs=state(c,root)['results'];assert len(cs)==2
     for rev,cand in enumerate(sorted(cs,key=lambda c:c['start']),1):
         r=c.post(root+f"/ai/results/{cand['id']}/decision",json={'action':'approve','revision':rev});assert r.status_code==200,r.text
@@ -231,7 +238,7 @@ def test_approve_small_span_in_very_long_paragraph_and_backup(session,mock_ai,mo
     from lxml import etree
     from epub_proofreader.epub import Book
     source=Book(SAMPLE.read_bytes());tree=source.trees['EPUB/chapter1.xhtml'];node=tree.xpath('//x:p',namespaces=NS)[1]
-    node.text=''.join(chr(0x4e00+i) for i in range(21000))+'天汽。'
+    node.text=''.join(chr(0x4e00+i) for i in range(21000)).replace('汽','水')+'天汽。'
     for child in list(node):node.remove(child)
     import io,zipfile
     data=module.editing.repack(SAMPLE.read_bytes(),{'EPUB/chapter1.xhtml':etree.tostring(tree,encoding='utf-8',xml_declaration=True)})
@@ -272,12 +279,12 @@ def test_partial_candidates_are_persisted_deduplicated_and_retried(session,mock_
     c,create=session;root=create();prompts=[]
     def mixed(e,s,p):
         prompts.append(p);d=parse_prompt(p)
-        return Reply(json.dumps({'paragraph_id':d['paragraph_id'],'suggestions':[suggestion(reason=f'理由{len(prompts)}'),suggestion('ここにない原文','変更')]}),10,20)
+        return Reply(json.dumps({'paragraph_id':d['paragraph_id'],'findings':[hit(d),{'i':0,'o':'不存在','r':'変更'}]}),10,20)
     monkeypatch.setattr(PROVIDERS['ollama'],'generate',mixed);ident=job(c,root);finish(ident);s=state(c,root)
     assert len(s['results'])==1 and s['jobs'][0]['failed']==1 and s['jobs'][0]['status']=='completed_with_errors'
-    assert '原文が対象範囲' in prompts[1] and '前回の検証結果' in prompts[1]
+    assert '最大2文字' in prompts[1] and '前回の検証結果' in prompts[1]
     assert '天汽' in details(c,root)['editor_text']
     def good(e,s,p):
-        d=parse_prompt(p);return Reply(json.dumps({'paragraph_id':d['paragraph_id'],'suggestions':[suggestion()]}),10,20)
+        d=parse_prompt(p);return Reply(json.dumps({'paragraph_id':d['paragraph_id'],'findings':[hit(d)]}),10,20)
     monkeypatch.setattr(PROVIDERS['ollama'],'generate',good);c.post(root+f'/ai/jobs/{ident}/retry');finish(ident);s=state(c,root)
     assert len(s['results'])==1 and s['jobs'][0]['failed']==0 and s['jobs'][0]['error'] is None

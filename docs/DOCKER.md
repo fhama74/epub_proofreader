@@ -80,6 +80,17 @@ AIを使っていなかった環境で鍵が存在しない場合は、新しい
 
 ## Ollamaの接続
 
+ローカルAIの推奨モデルは **[Gemma 4 12B](https://ollama.com/library/gemma4:12b)**（モデル名：`gemma4:12b`）です。Ollamaを実行する環境でモデルを取得してください。OllamaもDockerコンテナなら、実際のコンテナ名に置き換えて実行します。
+
+```sh
+# Ollamaを直接実行している場合
+ollama pull gemma4:12b
+# OllamaをDockerで実行している場合（コンテナ名がollamaの例）
+docker exec ollama ollama pull gemma4:12b
+```
+
+新規環境の初期エンジンはGemma 4 12Bです。既存環境の登録済みエンジンは保持するため、「エンジン管理」でモデルを `gemma4:12b` に変更するか、新しいエンジンとして追加してください。モデルの重みやOllama本体はProofreaderのイメージには含みません。
+
 コンテナの`localhost`はコンテナ自身です。Dockerホスト上のOllamaは、エンジン画面の接続先を`http://host.docker.internal:11434`へ変更します。`.env`の`AI_ALLOWED_ORIGINS`に同じ起点URLを指定します。ComposeはDebianにも`host-gateway`を追加します。Ollama側もコンテナから到達できるアドレスで待ち受ける必要があります。
 
 別サーバーのOllamaを使う場合は、そのURLを許可リストと画面の両方に設定します。クラウド3社は公式URLだけを使います。

@@ -7,7 +7,7 @@ export function markAIText(paragraph:Element,candidates:{start:number;end:number
  const walker=doc.createTreeWalker(paragraph,4,{acceptNode:n=>n.parentElement?.closest('rt,rp,rtc')?2:1});
  const slots:{node:Text;chars:string[];start:number}[]=[];const text:string[]=[];let node;
  while((node=walker.nextNode())){const chars=Array.from(node.textContent || '');slots.push({node:node as Text,chars,start:text.length});text.push(...chars);}
- const intervals=candidates.filter(c=>c.start>=0 && c.end>=c.start && c.end<=text.length && text.slice(c.start,c.end).join('')===c.original).map(c=>({start:c.start===c.end?Math.max(0,c.start-1):c.start,end:c.start===c.end?Math.min(text.length,Math.max(0,c.start-1)+1):c.end})).sort((a,b)=>a.start-b.start);
+ const intervals=candidates.filter(c=>Array.from(c.original).length>=1 && Array.from(c.original).length<=2 && c.start>=0 && c.end>=c.start && c.end<=text.length && text.slice(c.start,c.end).join('')===c.original).map(c=>({start:c.start===c.end?Math.max(0,c.start-1):c.start,end:c.start===c.end?Math.min(text.length,Math.max(0,c.start-1)+1):c.end})).sort((a,b)=>a.start-b.start);
  const merged:{start:number;end:number}[]=[];
  for(const range of intervals){const last=merged.at(-1);if(last && range.start<=last.end)last.end=Math.max(last.end,range.end);else merged.push({...range});}
  for(const slot of slots){

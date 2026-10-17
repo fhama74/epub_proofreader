@@ -12,7 +12,7 @@ from epub_proofreader.ai.providers.base import Reply
 
 def start(c,root,**patch):
     b=c.get(root).json()
-    request={'engine_id':engines(c)[0]['id'],'scope':'chapter','chapter_id':b['chapters'][0]['id'],'revision':b['edit_state']['revision'],'request_id':str(uuid.uuid4()),'batch_paragraphs':4,**patch}
+    request={'engine_id':engines(c)[0]['id'],'scope':'chapter','chapter_id':b['chapters'][0]['id'],'revision':b['edit_state']['revision'],'request_id':str(uuid.uuid4()),'batch_paragraphs':4,'skip_confirmed':False,**patch}
     r=c.post(root+'/ai/jobs',json=request);assert r.status_code==200,r.text
     return r.json()['job_id']
 
@@ -21,8 +21,8 @@ def response(prompt):
     q=json.loads(prompt.split('\n前回')[0]);findings=[]
     if q['query_type']=='body':
         for p in q['paragraphs']:
-            for u in p['units']:
-                if '天汽' in u['text']:findings.append({'paragraph_id':p['paragraph_id'],'unit_id':u['unit_id'],'original':'天汽','replacement':'天気','reason':'OCR誤認識','category':'kanji','confidence':.8})
+            for unit_index,u in enumerate(p['units']):
+                if '天汽' in u['text']:findings.append({'paragraph_id':p['paragraph_id'],'unit_id':unit_index,'start':u['text'].index('汽'),'original':'汽','replacement':'気','reason':'OCR誤認識','category':'kanji','confidence':.8})
     return q,findings
 
 
