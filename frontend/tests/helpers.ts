@@ -9,6 +9,9 @@ export async function newProject(page:Page,epub='book.epub',pdf?:string){
   await page.getByRole('button',{name:'作成',exact:true}).click();
   await expect(page.getByRole('dialog',{name:'新規プロジェクト',exact:true})).toHaveCount(0);
   await expect(page.getByLabel('本文を編集',{exact:true})).toBeEnabled();
+  const frame=page.frameLocator('iframe');
+  await expect(frame.locator('#epub-content')).toBeVisible();
+  await expect.poll(()=>frame.locator('#epub-content').evaluate(el=>el.ownerDocument.readyState)).toBe('complete');
 }
 
 export async function openActions(page:Page){if(await page.locator('.workspace-menu').getAttribute('open')===null)await page.getByLabel('操作メニュー',{exact:true}).click();}

@@ -17,7 +17,7 @@ test('sample PDF rendering, vertical ruby, chapter and paragraph navigation', as
   await expect.poll(() => page.locator('canvas').evaluate((c: HTMLCanvasElement) => {
     if (!c.width || !c.height) return false;
     const rgba = c.getContext('2d')!.getImageData(0, 0, c.width, c.height).data;
-    let dark = 0; for (let i = 0; i < rgba.length; i += 4) if (rgba[i] < 100 && rgba[i + 3] > 0) dark++;
+    let dark = 0; for (let i = 0; i < rgba.length; i += 4) if (rgba[i] < 180 && rgba[i + 1] < 180 && rgba[i + 2] < 180 && rgba[i + 3] > 0) dark++;
     return dark > 100;
   })).toBe(true);
   await page.getByRole('button', {name: '次の段落・文'}).click();

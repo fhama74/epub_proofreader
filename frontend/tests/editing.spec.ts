@@ -103,3 +103,24 @@ test('proof controls live in pane 03 and selected sentences stay in view',async(
   await page.getByLabel('次の段落・文',{exact:true}).click();
   await expect(page.frameLocator('iframe').locator('.sentence-selected')).not.toHaveCount(0);
 });
+
+
+test('switching paragraphs disables editing until the new text is loaded',async({page})=>{
+  await newProject(page);
+  let release!:()=>void;
+  const pending=new Promise<void>(resolve=>{release=resolve;});
+  await page.route('**/paragraphs/chapter0001-p00002',async route=>{
+    if(route.request().method()==='GET')await pending;
+    await route.continue();
+  });
+  try{
+    await page.getByLabel('次の段落・文',{exact:true}).click();
+    await expect(page.getByLabel('本文を編集',{exact:true})).toBeDisabled();
+  }finally{release();}
+  const editor=page.getByLabel('本文を編集',{exact:true});
+  await expect(editor).toHaveValue('今日は良い天汽だった。庭の向こうで、小さな鳥が鳴いている。');
+  await expect(editor).toBeEnabled();
+  await editor.fill('今日は良い天気だった。庭の向こうで、小さな鳥が鳴いている。');
+  await page.getByRole('button',{name:'更新',exact:true}).click();
+  await expect(page.getByLabel('現在の本文',{exact:true})).toContainText('天気');
+});
