@@ -39,7 +39,7 @@ export default function App(){
   const [aiModal,setAiModal]=useState(false);
   const [aiHighlight,setAiHighlight]=useState<Candidate|null>(null);
   const [saving,setSaving]=useState(false);const [loading,setLoading]=useState(false);const [error,setError]=useState('');const [query,setQuery]=useState('');const [selecting,setSelecting]=useState(false);
-  const input=useRef<HTMLInputElement>(null);const historyInput=useRef<HTMLInputElement>(null);const panes=useRef<HTMLDivElement>(null);const viewTimer=useRef<ReturnType<typeof setTimeout>|undefined>(undefined);const readyId=useRef<string|null>(null);
+  const input=useRef<HTMLInputElement>(null);const historyInput=useRef<HTMLInputElement>(null);const panes=useRef<HTMLDivElement>(null);const readyId=useRef<string|null>(null);
   const reportError=useCallback((message:string)=>setError(message),[]);
   const store=useProject(reportError);const {project,persist,initialize,flush,run,accept}=store;
   const {fontSize,left,right,hidePdf,hideInfo}=view;
@@ -52,12 +52,19 @@ export default function App(){
   const pdfUnit=pdfSentence && unit?{...unit,kind:'sentence' as const,sentence_index:pdfSentence.index,text:pdfSentence.text}:unit;
   const modal=!!editTarget || !!dialog || !!structural || libraryOpen || aiModal || newProject;
   const openBook=useCallback(async(value:Book)=>{
-    setReaderRestore(null);readerPosition.current=null;setChapterLanding(null);readyId.current=null;setAIResults([]);setReaderTab('epub');setReaderEditing(false);setCurrentCandidate(null);setAiHighlight(null);setAIRequest(null);setAINavigation({previousId:null,nextId:null,count:0,index:-1});setHtml(null);clearTimeout(viewTimer.current);setSelecting(false);setQuery('');
+    setReaderRestore(null);readerPosition.current=null;setChapterLanding(null);readyId.current=null;setAIResults([]);setReaderTab('epub');setReaderEditing(false);setCurrentCandidate(null);setAiHighlight(null);setAIRequest(null);setAINavigation({previousId:null,nextId:null,count:0,index:-1});setHtml(null);setSelecting(false);setQuery('');
     let meta=await api<Project>(`/api/books/${value.id}/project`);
     if(!meta.pdf && pendingPdf.current){const form=new FormData();form.append('file',pendingPdf.current);const response=await fetch(`/api/books/${value.id}/pdf`,{method:'POST',body:form});if(!response.ok)throw new Error((await response.json()).detail);meta=await response.json();pendingPdf.current=null;}
     let attached:File|null=null;if(meta.pdf){const response=await fetch(`/api/books/${value.id}/pdf`);if(!response.ok)throw new Error('保存済みPDFを取得できません。');attached=new File([await response.blob()],meta.pdf.name,{type:'application/pdf'});}
     const restored={...defaultView,...meta.view,pdf:{...defaultView.pdf,...meta.view.pdf}};
-    try{const local=JSON.parse(localStorage.getItem(`eproof-view:${value.id}`) || 'null');if(local && local.fingerprint===value.fingerprint && local.version>=meta.version)Object.assign(restored,local.view);}catch{/* server data still restores the workspace */}
+    try{
+      const local=JSON.parse(localStorage.getItem(`eproof-view:${value.id}`) || 'null');
+      // A shared project update must not replace this browser's own position.
+      if(local?.fingerprint===value.fingerprint && local.view){
+        Object.assign(restored,local.view,{pdf:{...restored.pdf,...local.view.pdf}});
+        if(local.revision!==undefined && local.revision!==value.edit_state.revision)restored.epubScroll=null;
+      }
+    }catch{/* Corrupt or unavailable browser storage falls back to the project view. */}
     const c=value.chapters.find(c=>c.id===restored.chapterId) || value.chapters[0];const u=c?resolveProofUnit(c.proof_units,restored.paragraphId,restored.sentenceIndex):undefined;
     restored.chapterId=c?.id;restored.paragraphId=c?.headings?.some(h=>h.id===restored.paragraphId)?restored.paragraphId:u?.paragraph_id;restored.sentenceIndex=u?.sentence_index;
     setPdf(attached);setView(restored);setBook(value);activeBook.current=value;initialize(value.id,meta);readyId.current=value.id;localStorage.setItem('lastBook',value.id);
@@ -65,11 +72,9 @@ export default function App(){
   useEffect(()=>{const last=localStorage.getItem('lastBook');if(last)void api<Book>(`/api/books/${last}`).then(openBook).catch(reportError);},[openBook,reportError]);
   useEffect(()=>{
     if(!book || readyId.current!==book.id || loading)return;
-    clearTimeout(viewTimer.current);
-    try{localStorage.setItem(`eproof-view:${book.id}`,JSON.stringify({view,fingerprint:book.fingerprint,version:project?.version || 0}));}catch{reportError('ブラウザへの表示位置保存に失敗しました。プロジェクト保存を利用してください。');}
-    viewTimer.current=setTimeout(()=>{void persist({view}).catch(()=>{});},500);
-    return()=>clearTimeout(viewTimer.current);
-  },[view,book?.id,loading,persist,reportError]);
+
+    try{localStorage.setItem(`eproof-view:${book.id}`,JSON.stringify({view,fingerprint:book.fingerprint,revision:book.edit_state.revision}));}catch{reportError('ブラウザへの表示位置保存に失敗しました。プロジェクト保存を利用してください。');}
+  },[view,book?.id,book?.edit_state.revision,loading,reportError]);
   const setPdfSettings=useCallback((patch:Partial<WorkspaceView['pdf']>)=>setView(v=>{if(Object.entries(patch).every(([key,value])=>v.pdf[key as keyof typeof v.pdf]===value))return v;return {...v,pdf:{...v.pdf,...patch}};}),[]);
   const saveEpubScroll=useCallback((position:number)=>setView(v=>v.epubScroll===position?v:{...v,epubScroll:position}),[]);
   useEffect(()=>{if(!book || !chapter)return;const controller=new AbortController();setHtml(null);void fetch(`/api/books/${book.id}/chapters/${chapter.id}`,{signal:controller.signal}).then(async r=>{if(!r.ok)throw new Error((await r.json()).detail);return r.json();}).then(value=>setHtml(value.html)).catch(e=>{if(e.name!=='AbortError')reportError(String(e));});return()=>controller.abort();},[book,chapter,reportError]);
@@ -91,9 +96,9 @@ export default function App(){
   function turnChapter(step:number){setReaderRestore(null);const c=book?.chapters[chapterIndex+step];if(!c)return;const u=step>0?c.proof_units[0]:c.proof_units.at(-1);setChapterLanding(step>0?'start':'end');setSelecting(false);setCurrentCandidate(null);setAiHighlight(null);setAIRequest(null);setView(v=>({...v,chapterId:c.id,paragraphId:u?.paragraph_id,sentenceIndex:u?.sentence_index,epubScroll:null}));}
   function selectChapter(value:number){setReaderRestore(null);setChapterLanding('start');const c=book?.chapters[value],u=c?.proof_units[0];setSelecting(false);setView(v=>({...v,chapterId:c?.id,paragraphId:u?.paragraph_id,sentenceIndex:u?.sentence_index,epubScroll:null}));setQuery('');}
   function edit(){if(unit)setEditTarget({paragraphId:unit.paragraph_id,sentenceIndex:unit.kind==='sentence'?unit.sentence_index!:undefined});}
-  async function attachPdf(file:File){const b=activeBook.current;if(!b){pendingPdf.current=file;setPdf(file);return;}clearTimeout(viewTimer.current);await flush();const form=new FormData();form.append('file',file);const response=await fetch(`/api/books/${b.id}/pdf`,{method:'POST',body:form});const meta=await response.json();if(!response.ok)throw new Error(meta.detail);accept(meta);setPdf(file);setView(v=>({...v,pdf:{...defaultView.pdf,...meta.view.pdf}}));}
+  async function attachPdf(file:File){const b=activeBook.current;if(!b){pendingPdf.current=file;setPdf(file);return;}await flush();const form=new FormData();form.append('file',file);const response=await fetch(`/api/books/${b.id}/pdf`,{method:'POST',body:form});const meta=await response.json();if(!response.ok)throw new Error(meta.detail);accept(meta);setPdf(file);setView(v=>({...v,pdf:{...defaultView.pdf,...meta.view.pdf}}));}
   async function readFiles(files:File[]){setLoading(true);setError('');try{
-    clearTimeout(viewTimer.current);await flush();
+    await flush();
     for(const file of [...files].sort((a,b)=>Number(a.name.toLowerCase().endsWith('.pdf'))-Number(b.name.toLowerCase().endsWith('.pdf')))){
       const name=file.name.toLowerCase();
       if(name.endsWith('.pdf')){if(file.size>256*1024*1024 || !(await file.slice(0,1024).text()).includes('%PDF-'))throw new Error('PDF形式またはサイズが不正です（256 MiBまで）。');await attachPdf(file);}
@@ -108,8 +113,8 @@ export default function App(){
   }
   async function undoRedo(kind:'undo'|'redo'){if(!book || saving)return;setSaving(true);setError('');try{await run(async()=>{updateBook(await api<Book>(`/api/books/${book.id}/${kind}`,'POST',{revision:book.edit_state.revision}));});}catch(e){reportError(String(e));}finally{setSaving(false);}}
   useEffect(()=>{const listener=(e:KeyboardEvent)=>{if(modal || !book || saving || !(e.ctrlKey || e.metaKey) || !['z','y'].includes(e.key.toLowerCase()))return;const tag=(e.target as Element)?.tagName?.toLowerCase();if(tag==='input'||tag==='textarea')return;const redo=e.shiftKey || e.key.toLowerCase()==='y';if(redo?book.edit_state.can_redo:book.edit_state.can_undo){e.preventDefault();void undoRedo(redo?'redo':'undo');}};window.addEventListener('keydown',listener);return()=>window.removeEventListener('keydown',listener);},[book,saving,modal]);
-  async function saveProject(){if(!book)return;setSaving(true);setError('');try{clearTimeout(viewTimer.current);await persist({view:currentView.current});await flush();const response=await fetch(`/api/books/${book.id}/project/export`);if(!response.ok)throw new Error((await response.json()).detail);const url=URL.createObjectURL(await response.blob());const a=document.createElement('a');a.href=url;a.download=(book.metadata.title?.[0] || 'project')+'.eproof';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}catch(e){reportError(String(e));}finally{setSaving(false);}}
-  async function importHistory(file:File){if(!book)return;setLoading(true);try{clearTimeout(viewTimer.current);await flush();const form=new FormData();form.append('file',file);const response=await fetch(`/api/books/${book.id}/history/import`,{method:'POST',body:form});const value=await response.json();if(!response.ok)throw new Error(value.detail);await openBook(value);}catch(e){reportError(String(e));}finally{setLoading(false);if(historyInput.current)historyInput.current.value='';}}
+  async function saveProject(){if(!book)return;setSaving(true);setError('');try{await persist({view:currentView.current});await flush();const response=await fetch(`/api/books/${book.id}/project/export`);if(!response.ok)throw new Error((await response.json()).detail);const url=URL.createObjectURL(await response.blob());const a=document.createElement('a');a.href=url;a.download=(book.metadata.title?.[0] || 'project')+'.eproof';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}catch(e){reportError(String(e));}finally{setSaving(false);}}
+  async function importHistory(file:File){if(!book)return;setLoading(true);try{await flush();const form=new FormData();form.append('file',file);const response=await fetch(`/api/books/${book.id}/history/import`,{method:'POST',body:form});const value=await response.json();if(!response.ok)throw new Error(value.detail);await openBook(value);}catch(e){reportError(String(e));}finally{setLoading(false);if(historyInput.current)historyInput.current.value='';}}
   async function rectangle(page:number,rect:[number,number,number,number]){if(!project?.pdf || !paragraph)return;const mapping:Mapping={page,rectangle:rect,pdf_sha256:project.pdf.sha256};try{await persist({mappings:{[paragraph.id]:[...project.mappings[paragraph.id] || [],mapping]}});setSelecting(false);}catch(e){reportError(String(e));}}
   const prevAvailable=!!book && ((heading?heading.next_paragraph_index>0:index>0) || chapterIndex>0);const nextAvailable=!!book && ((heading?heading.next_paragraph_index<chapter!.paragraph_count:index<units.length-1) || chapterIndex<book.chapters.length-1);
   const allParagraphs=book?.chapters.flatMap(c=>c.paragraphs) || [];const checked=allParagraphs.filter(p=>project?.statuses[p.id]==='human_checked').length;const review=allParagraphs.filter(p=>project?.statuses[p.id]==='review').length;
@@ -143,7 +148,7 @@ export default function App(){
       </div></aside></>}
     </div>
     {newProject && <NewProjectDialog onClose={()=>setNewProject(false)} onCreate={readFiles}/>}
-    {libraryOpen && <LibraryDialog onClose={()=>setLibraryOpen(false)} onOpen={async id=>{clearTimeout(viewTimer.current);if(activeBook.current)await persist({view:currentView.current});await flush();await openBook(await api<Book>(`/api/books/${id}`));}} onDeleted={id=>{try{Object.keys(localStorage).filter(key=>key===`eproof-view:${id}` || key.startsWith(`eproof-draft:${id}:`)).forEach(key=>localStorage.removeItem(key));}catch{reportError('削除済みプロジェクトのブラウザ内保護データを削除できませんでした。');}if(activeBook.current?.id===id){readyId.current=null;clearTimeout(viewTimer.current);setBook(null);activeBook.current=null;setPdf(null);setHtml(null);localStorage.removeItem('lastBook');localStorage.removeItem(`eproof-view:${id}`);}}}/>}
+    {libraryOpen && <LibraryDialog onClose={()=>setLibraryOpen(false)} onOpen={async id=>{await flush();await openBook(await api<Book>(`/api/books/${id}`));}} onDeleted={id=>{try{Object.keys(localStorage).filter(key=>key===`eproof-view:${id}` || key.startsWith(`eproof-draft:${id}:`)).forEach(key=>localStorage.removeItem(key));}catch{reportError('削除済みプロジェクトのブラウザ内保護データを削除できませんでした。');}if(activeBook.current?.id===id){readyId.current=null;setBook(null);activeBook.current=null;setPdf(null);setHtml(null);localStorage.removeItem('lastBook');localStorage.removeItem(`eproof-view:${id}`);}}}/>}
     {book && project && editTarget && <RubyReviewDialog book={book} project={project} persist={persist} run={run} onUpdate={updateBook} target={editTarget} candidates={aiResults} onResults={setAIResults} onClose={()=>setEditTarget(null)}/>}
     {book && dialog && <ProofingDialog run={run} kind={dialog} book={book} paragraphId={paragraph?.id} onUpdate={updateBook} onClose={()=>setDialog(null)}/>}
     {book && structural && paragraph && unit && <StructureDialog run={run} initialAction={structural} book={book} paragraph={paragraph} previous={chapter?.paragraphs[unit.paragraph_index-1]} onUpdate={updateBook} onClose={()=>setStructural(false)}/>}
