@@ -15,7 +15,8 @@ def test_clear_is_permanent_and_keeps_approved_edits_and_usage(session,mock_ai):
     assert hidden['jobs'][0]['input_tokens']==before['jobs'][0]['input_tokens']
     assert details(c,root)==edited
     assert c.post(root+f"/ai/results/{candidate['id']}/decision",json={'action':'hold','revision':1}).status_code==404
-    assert c.post(root+'/ai/results/restore').status_code==405
+    # A built frontend catches unknown POSTs as 405; API-only CI returns 404.
+    assert c.post(root+'/ai/results/restore').status_code in {404,405}
     restored=state(c,root);assert restored['cleared_count']==0 and restored['results']==[]
     assert details(c,root)==edited
 
@@ -37,7 +38,7 @@ def test_clear_is_project_scoped_and_preserved_in_portable_backup(session,mock_a
     r=c.post('/api/projects/import',files={'file':('cleared.eproof',archive)});assert r.status_code==200,r.text
     imported='/api/books/'+r.json()['id']
     assert state(c,imported)['results']==[] and state(c,imported)['cleared_count']==0
-    assert c.post(imported+'/ai/results/restore').status_code==405
+    assert c.post(imported+'/ai/results/restore').status_code in {404,405}
     assert len(state(c,imported)['results'])==0
     assert state(c,root)['cleared_count']==0
 
