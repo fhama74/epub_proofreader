@@ -12,6 +12,7 @@ test('edit, undo, redo, ruby and validated EPUB download',async({page})=>{
   await expect(frame.locator('p.selected')).toContainText('天汽');
   await menuAction(page,'Redo');
   await expect(frame.locator('p.selected')).toContainText('天気');
+  await page.getByLabel('前の段落・文',{exact:true}).click();
   await frame.locator('ruby').first().click();
   await page.getByRole('button',{name:'ルビの訂正',exact:true}).click();
   await expect(page.getByRole('dialog',{name:'ルビの訂正'})).toBeVisible();
@@ -67,7 +68,8 @@ test('sentence navigation and reversible paragraph split, merge and insertion',a
   await page.getByRole('button',{name:'前の段落に結合',exact:true}).click();
   await page.getByRole('button',{name:'前の段落に結合して再計算',exact:true}).click();
   await expect(page.locator('.proof-position')).toContainText('/ 3');
-  await page.getByRole('button',{name:'欠けた本文を段落として追加',exact:true}).click();
+  await expect(page.getByRole('dialog',{name:'段落の挿入・結合'})).toHaveCount(0);
+  await page.locator('.info-pane').getByRole('button',{name:'欠けた本文を段落として追加',exact:true}).click();
   await page.getByLabel('挿入する本文',{exact:true}).fill('補完した本文。');
   await page.getByRole('button',{name:'段落を挿入して再計算',exact:true}).click();
   await expect(page.locator('.proof-position')).toContainText('/ 4');

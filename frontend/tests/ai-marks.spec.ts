@@ -1,7 +1,7 @@
 import {test,expect} from '@playwright/test';
 import {readFileSync} from 'node:fs';
 import ts from 'typescript';
-const compiled=ts.transpileModule(readFileSync(new URL('../src/aiTextMarks.ts',import.meta.url),'utf8'),{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.None}}).outputText.replaceAll('export function','function');
+const compiled=ts.transpileModule(readFileSync(new URL('../src/aiTextMarks.ts',import.meta.url),'utf8'),{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ESNext}}).outputText.replaceAll('export function','function');
 test('AI text marks include ruby bases, exclude readings, and clear without changing text',async({page})=>{
  await page.setContent(`<style>body{color:rgb(36,52,45)}.ai-unreviewed-text{color:rgb(180,49,49)}</style><p>その<ruby>唄<rt>ころ</rt></ruby>の僕。</p><script>${compiled};markAIText(document.querySelector('p'),[{start:0,end:6,original:'その唄の僕。'}]);</script>`);
  await expect(page.locator('ruby span')).toHaveCSS('color','rgb(180, 49, 49)');

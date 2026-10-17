@@ -1,3 +1,4 @@
+import pytest
 from types import SimpleNamespace
 from pathlib import Path
 from epub_proofreader import java_runtime as j
@@ -13,10 +14,12 @@ def test_java_version_probe(monkeypatch):
         assert j.usable('java') is expected
 
 
-def test_local_runtime_works_without_environment_and_skips_system_stub(monkeypatch,tmp_path):
+@pytest.mark.parametrize('platform,binary', [('win32','java.exe'),('darwin','java'),('linux','java')])
+def test_local_runtime_works_without_environment_and_skips_system_stub(monkeypatch,tmp_path,platform,binary):
+    monkeypatch.setattr(j,'sys',SimpleNamespace(platform=platform))
     monkeypatch.delenv('JAVA_BIN',raising=False);monkeypatch.delenv('JAVA_HOME',raising=False)
     monkeypatch.setattr(j,'ROOT',tmp_path);monkeypatch.setattr(j.shutil,'which',lambda _: '/usr/bin/java')
-    local=tmp_path/'.tools/java/bin/java'
+    local=tmp_path/'.tools/java/bin'/binary
     monkeypatch.setattr(j,'usable',lambda p:Path(p)==local)
     assert j.find_java()==str(local)
 

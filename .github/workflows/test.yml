@@ -5,6 +5,7 @@ permissions:
 jobs:
   backend:
     strategy:
+      fail-fast: false
       matrix:
         os: [macos-latest, windows-latest, ubuntu-latest]
         python: ['3.12', '3.13', '3.14']
@@ -49,3 +50,10 @@ jobs:
         working-directory: frontend
       - run: pnpm test:e2e
         working-directory: frontend
+      - name: Browser failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-failure-diagnostics
+          path: frontend/test-results/
+          retention-days: 7
