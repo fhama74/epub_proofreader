@@ -1,6 +1,6 @@
 # Debian / Docker運用
 
-Docker EngineとDocker Compose v2を導入したDebianで動かす構成です。PythonとNode.jsはイメージ内に入るためホストへの導入は不要です。初期設定スクリプトにはホストのPython 3を使います。
+Docker EngineとDocker Compose v2を導入したDebianで動かす構成です。公開イメージを使う場合、ホストへのPython・Node.js・Gitの導入は不要です。ソースからビルドする手順の初期設定スクリプトでは、ホストのPython 3を使います。
 
 ## 公開イメージで新しく始める（Git・Python不要）
 
@@ -26,7 +26,7 @@ EPROOF_IMAGE=ghcr.io/fhama74/epub_proofreader:latest
 
 更新は `docker compose pull`、`docker compose up -d` の順で実施します。更新前に下記の保存領域とキーをバックアップしてください。再現可能な版を固定する場合は、GHCRの `sha-<40桁のコミットID>` タグまたはダイジェストを `EPROOF_IMAGE` に指定します。
 
-初回のGHCRパッケージは所有者がGitHubのPackages設定でPublicに切り替える必要があります。公開後は利用者のGitHubログインは不要です。
+この公開イメージは、GitHubログインなしで取得できます。
 
 ## ソースからビルドする場合
 
@@ -95,7 +95,7 @@ docker compose up -d
 python3 scripts/docker_smoke.py --state /tmp/eproof-smoke.json
 ```
 
-ヘルスチェック、画面・PDF資材の配信、プロジェクト保存・再作成後の復元、実EPUBCheckを検証します。GitHub Actionsにも同じ手順を設定しています。ソースからのDocker起動・EPUBCheck・再作成後のデータ保持はGitHub ActionsのLinux環境で検証済みです。GHCR公開時にも両CPUの構成で検証します。Debian実機とDocker Desktop実機での操作確認は別途必要です。
+ヘルスチェック、画面・PDF資材の配信、プロジェクト保存・再作成後の復元、実EPUBCheckを検証します。GitHub Actionsにも同じ手順を設定しています。ソースからのDocker起動・EPUBCheck・再作成後のデータ保持はGitHub ActionsのLinux環境で検証済みです。GHCR公開時にもAMD64・ARM64の両方で検証し、公開済みイメージの取得・起動まで成功しています。Debian実機とDocker Desktop実機での操作確認は別途必要です。
 
 参考：[Docker Composeのsecrets](https://docs.docker.com/compose/how-tos/use-secrets/)、[Composeの起動と設定確認](https://docs.docker.com/compose/gettingstarted/)。
 
@@ -103,6 +103,6 @@ python3 scripts/docker_smoke.py --state /tmp/eproof-smoke.json
 
 GitHub Actionsの `Publish GHCR image` を手動実行するか、`v` で始まるタグをpushすると公開します。両CPUで起動・EPUBCheck・保存データとキーの保持を検証後、`latest` と `sha-<コミットID>` を公開します。タグからの実行では `v` を除いた版タグも追加します。通常のmainへのpushではイメージを更新しません。
 
-GitHub Actionsの一時的な `GITHUB_TOKEN` を使い、利用者のAPIキーや個人のGitHubトークンをイメージに入れません。初回は [Packages設定](https://github.com/users/fhama74/packages/container/epub_proofreader/settings) で公開範囲をPublicに変更してください。
+GitHub Actionsの一時的な `GITHUB_TOKEN` を使い、利用者のAPIキーや個人のGitHubトークンをイメージに入れません。別のリポジトリへ複製して公開する場合、初回のパッケージがPrivateになることがあります。その場合はPackages設定でPublicに変更してから、ログインなしの取得を確認してください。
 
 対応するGPL/LGPLのDebianソースとSaxonのソースは、同じコミットの `container-<コミットID>` リリースへ別添します。大きなソースアーカイブは通常のイメージ取得には含まれません。詳しくは [コンテナのソースとライセンス](CONTAINER_SOURCES.md) を参照してください。
