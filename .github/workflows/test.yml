@@ -18,7 +18,7 @@ jobs:
       - run: uv run pytest -q
   browser:
     env:
-      DATA_DIR: ${{ runner.temp }}/eproof-browser
+      DATA_DIR: ${{ github.workspace }}/.ci-data/eproof-browser
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
