@@ -27,7 +27,7 @@ test('sample PDF rendering, vertical ruby, chapter and paragraph navigation', as
   await page.getByLabel('章の選択').selectOption('1');
   await expect(epub.locator('ruby').first().locator('rt')).toHaveCount(2);
   await epub.locator('p').nth(1).click();
-  await expect(page.locator('.proof-position')).toContainText('2 / 2');
+  await expect(page.locator('.proof-position')).toContainText('2 / 3');
   await expect(page.locator('.pdf-toolbar button')).toHaveCount(0);
   await expect(page.getByLabel('PDF次ページ',{exact:true})).toHaveCount(1);
   await page.getByLabel('PDF次ページ').click();
