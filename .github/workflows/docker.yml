@@ -1,0 +1,26 @@
+name: Docker build and persistence
+on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  docker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 scripts/init_docker.py
+      - run: docker compose config --quiet
+      - run: docker compose up --build -d
+      - name: Health, EPUBCheck and PDF assets
+        run: python3 scripts/docker_smoke.py --state /tmp/eproof-smoke.json --create
+      - name: Keep the same data across container recreation
+        run: |
+          docker compose down
+          docker compose up -d
+          python3 scripts/docker_smoke.py --state /tmp/eproof-smoke.json
+      - name: Container logs
+        if: always()
+        run: docker compose logs --no-color --tail 100
+      - name: Stop containers
+        if: always()
+        run: docker compose down

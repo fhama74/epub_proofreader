@@ -1,0 +1,52 @@
+"""Immutable XHTML overlays. ZIP assembly is reserved for explicit exports."""
+from dataclasses import dataclass
+from functools import lru_cache,cached_property
+from collections import OrderedDict
+from hashlib import sha256
+import json
+
+@lru_cache(maxsize=2)
+def baseline(data):
+ from .epub import Book
+ return Book(data)
+
+recent=OrderedDict()
+
+@dataclass(frozen=True)
+class WorkingFiles:
+ base:bytes
+ replacements:tuple=()
+ @classmethod
+ def merge(cls,source,changes=None):
+  current=dict(source.replacements) if isinstance(source,cls) else {}
+  base=source.base if isinstance(source,cls) else source
+  current.update(changes or {})
+  return cls(base,tuple(sorted(current.items())))
+ @cached_property
+ def fingerprint(self):
+  if not self.replacements:return sha256(self.base).hexdigest()
+  return sha256(json.dumps([sha256(self.base).hexdigest(),[(p,sha256(v).hexdigest()) for p,v in self.replacements]],ensure_ascii=False).encode()).hexdigest()
+ def model(self):return model(self)
+ def materialize(self):
+  from .editing import repack
+  return repack(self.base,dict(self.replacements)) if self.replacements else self.base
+
+@lru_cache(maxsize=4)
+def model(source):
+ key=sha256(source.base).digest();base=baseline(source.base)
+ previous=recent.get(key)
+ current=dict(source.replacements)
+ if previous:
+  old,book=previous;prior=dict(old.replacements)
+  changes={p:current.get(p,base.files[p]) for p in current.keys()|prior.keys() if current.get(p,base.files[p])!=prior.get(p,base.files[p])}
+ else:book=base;changes=current
+ result=book.updated(changes) if changes else book
+ # Use the exact snapshot, including removals, as the source of a later export.
+ import copy
+ result=copy.copy(result);result.original=source;result.fingerprint=source.fingerprint
+ recent[key]=(source,result);recent.move_to_end(key)
+ while len(recent)>2:recent.popitem(last=False)
+ return result
+
+
+def materialize(source):return source.materialize() if isinstance(source,WorkingFiles) else source

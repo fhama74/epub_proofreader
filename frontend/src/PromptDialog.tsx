@@ -1,0 +1,12 @@
+import {useEffect,useState} from 'react';
+import {api,dialogKeys,useDialogFocus} from './dialogUtils';
+type Values={common:string;body:string;ruby:string};
+type Settings={values:Values;defaults:Values;revision:number};
+export default function PromptDialog({onClose}:{onClose:()=>void}){
+ const ref=useDialogFocus();const [settings,setSettings]=useState<Settings|null>(null);const [values,setValues]=useState<Values|null>(null);const [error,setError]=useState('');const [message,setMessage]=useState('');const [busy,setBusy]=useState(false);
+ useEffect(()=>{void api<Settings>('/api/ai/prompts').then(s=>{setSettings(s);setValues(s.values);}).catch(e=>setError(String(e)));},[]);
+ const dirty=!!settings && JSON.stringify(values)!==JSON.stringify(settings.values);
+ function close(){if(!dirty || window.confirm('指示の未保存の変更を破棄して閉じますか？'))onClose();}
+ async function save(){if(!settings || !values)return;setBusy(true);setError('');setMessage('');try{const s=await api<Settings>('/api/ai/prompts','PUT',{...values,revision:settings.revision});setSettings(s);setValues(s.values);setMessage('保存しました。次に開始するAI検査から適用します。');}catch(e){setError(String(e));}finally{setBusy(false);}}
+ return <div className="modal-shade"><section ref={ref} tabIndex={-1} onKeyDown={e=>dialogKeys(e,close)} className="editor-dialog ai-prompt-dialog" role="dialog" aria-modal="true" aria-label="AIへの指示を編集"><div className="dialog-heading"><h2>AIへの指示を編集</h2><button disabled={busy} onClick={close}>閉じる</button></div><div className="ai-prompt-fields"><p className="editor-help">全プロジェクト・全AI共通の設定です。本文とルビは別々に検査します。保存後に開始する検査へ適用し、開始済みの検査や既存の結果は変更しません。候補の位置・返答形式はツール側で指定します。</p>{values && (['common','body','ruby'] as const).map((key,i)=><label key={key}>{['共通の指示','本文検査の指示','ルビ検査の指示'][i]}<textarea aria-label={['共通の指示','本文検査の指示','ルビ検査の指示'][i]} value={values[key]} maxLength={6000} disabled={busy} onChange={e=>{setValues({...values,[key]:e.target.value});setMessage('');}}/></label>)}{error && <p className="error" role="alert">{error}</p>}{message && <p role="status">{message}</p>}</div><div className="dialog-actions"><button disabled={busy || !settings} onClick={()=>{if(settings){setValues({...settings.defaults});setMessage('初期の指示を読み込みました。「保存」で適用します。');}}}>デフォルトに戻す</button><button className="primary" disabled={busy || !dirty || !values || Object.values(values).some(v=>!v.trim())} onClick={()=>void save()}>保存</button></div></section></div>;
+}

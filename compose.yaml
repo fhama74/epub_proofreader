@@ -1,0 +1,23 @@
+services:
+  proofreader:
+    build: .
+    ports:
+      - "${EPROOF_BIND_ADDRESS:-127.0.0.1}:${EPROOF_PORT:-8000}:8000"
+    environment:
+      DATA_DIR: /app/data
+      AI_SECRET_KEY_FILE: /run/secrets/ai_secret_key
+      AI_ALLOWED_ORIGINS: ${AI_ALLOWED_ORIGINS:-}
+    volumes:
+      - ./data:/app/data
+    secrets:
+      - ai_secret_key
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    init: true
+    stop_grace_period: 30s
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+secrets:
+  ai_secret_key:
+    file: ${AI_SECRET_KEY_FILE:-./secrets/ai_secret_key}

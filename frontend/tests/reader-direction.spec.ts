@@ -1,0 +1,31 @@
+import {test,expect} from '@playwright/test';
+import {newProject,menuAction,openActions} from './helpers';
+test('EPUB CSS selects horizontal flow, page buttons and proofreading follow',async({page})=>{
+ await newProject(page,'horizontal.epub');
+ const body=page.frameLocator('iframe').locator('#epub-content');
+ await expect(body).toHaveCSS('writing-mode','horizontal-tb');
+ const previous=page.getByLabel('本文前の表示ページ',{exact:true}),next=page.getByLabel('本文次の表示ページ',{exact:true});
+ expect((await previous.boundingBox())!.x).toBeLessThan((await next.boundingBox())!.x);
+ await next.click();
+ await expect.poll(()=>body.evaluate(el=>el.scrollTop)).toBeGreaterThan(0);
+ await page.getByLabel('次の段落・文',{exact:true}).click();
+ await expect.poll(()=>page.frameLocator('iframe').locator('.sentence-selected').evaluate(el=>{const r=el.getBoundingClientRect();return r.top>=0 && r.bottom<=el.ownerDocument.documentElement.clientHeight;})).toBe(true);
+ await expect(page.locator('.info-pane').getByText('表示設定',{exact:true})).toHaveCount(0);
+ await page.locator('.epub-pane').getByText('表示設定',{exact:true}).click();
+ await expect(page.locator('.epub-pane').getByLabel('文字サイズ',{exact:true})).toBeVisible();
+ await openActions(page);await expect(page.locator('.workspace-menu').getByRole('button',{name:'作業データを書き出す',exact:true})).toBeVisible();
+});
+test('vertical EPUB shows next page on the left and highlights only differing characters',async({page})=>{
+ await newProject(page);
+ await expect(page.frameLocator('iframe').locator('#epub-content')).toHaveCSS('writing-mode','vertical-rl');
+ const previous=await page.getByLabel('本文前の表示ページ',{exact:true}).boundingBox(),next=await page.getByLabel('本文次の表示ページ',{exact:true}).boundingBox();
+ expect(next!.x).toBeLessThan(previous!.x);
+ await page.getByLabel('次の段落・文',{exact:true}).click();
+ await page.getByLabel('本文を編集',{exact:true}).fill('今日は良い天気だった。庭の向こうで、小さな鳥が鳴いている。');
+ await expect(page.getByLabel('現在の本文',{exact:true}).locator('.diff-changed')).toHaveText('汽');
+ await expect(page.locator('.diff-mirror .diff-changed')).toHaveText('気');
+ await expect(page.locator('.diff-mirror .diff-changed')).toHaveCSS('color','rgb(180, 49, 49)');
+ await page.getByRole('button',{name:'更新',exact:true}).click();
+ await expect(page.getByLabel('現在の本文',{exact:true})).toContainText('天気');
+ await expect(page.locator('.diff-changed')).toHaveCount(0);
+});

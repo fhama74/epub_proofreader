@@ -1,0 +1,6 @@
+import {useState} from 'react';
+import {useDialogFocus,dialogKeys} from './dialogUtils';
+export default function NewProjectDialog({onCreate,onClose}:{onCreate:(files:File[])=>Promise<void>;onClose:()=>void}){
+ const ref=useDialogFocus();const [epub,setEpub]=useState<File|null>(null);const [pdf,setPdf]=useState<File|null>(null);const [busy,setBusy]=useState(false);
+ return <div className="modal-shade"><section ref={ref} tabIndex={-1} className="editor-dialog" role="dialog" aria-modal="true" aria-label="新規プロジェクト" onKeyDown={e=>dialogKeys(e,()=>{if(!busy)onClose();})}><div className="dialog-heading"><h2>新規プロジェクト</h2><button onClick={onClose} disabled={busy}>閉じる</button></div><p className="editor-help">EPUBのファイル名と読み込み日時で作成し、このツールに自動保存します。</p><label className="edit-label">EPUB（必須）<input aria-label="新規プロジェクトのEPUB" type="file" accept=".epub" onChange={e=>setEpub(e.target.files?.[0] || null)}/></label><label className="edit-label">原本PDF（任意）<input aria-label="新規プロジェクトのPDF" type="file" accept=".pdf" onChange={e=>setPdf(e.target.files?.[0] || null)}/></label><div className="dialog-actions"><button className="primary" disabled={busy || !epub} onClick={()=>{if(!epub)return;setBusy(true);void onCreate(pdf?[epub,pdf]:[epub]).then(onClose).finally(()=>setBusy(false));}}>{busy?'作成中…':'作成'}</button></div></section></div>;
+}
