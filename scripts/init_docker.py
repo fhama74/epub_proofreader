@@ -6,7 +6,7 @@ from pathlib import Path
 import secrets
 
 
-def initialize(root: Path):
+def initialize(root: Path, write_env=True):
     root = root.resolve()
     (root / 'data').mkdir(exist_ok=True)
     private = root / 'secrets'
@@ -29,7 +29,7 @@ def initialize(root: Path):
             stream.write(base64.urlsafe_b64encode(secrets.token_bytes(32)) + b'\n')
         print('New encryption key created in secrets/ai_secret_key (value hidden).')
     env = root / '.env'
-    if not env.exists():
+    if write_env and not env.exists():
         with env.open('x') as out:
             out.write((root / '.env.example').read_text())
         print('.env created from the example.')
@@ -39,4 +39,6 @@ def initialize(root: Path):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--root', type=Path, default=Path(__file__).resolve().parents[1])
-    initialize(parser.parse_args().root)
+    parser.add_argument('--no-env', action='store_true', help='Initialize only storage and the key (prebuilt image).')
+    args = parser.parse_args()
+    initialize(args.root, write_env=not args.no_env)

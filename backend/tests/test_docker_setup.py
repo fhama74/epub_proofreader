@@ -40,6 +40,16 @@ def test_invalid_existing_key_is_not_replaced(tmp_path):
     assert key.read_text() == 'invalid'
 
 
+def test_image_setup_needs_no_env_example_and_keeps_original_key(tmp_path):
+    module.initialize(tmp_path, write_env=False)
+    key = (tmp_path / 'secrets/ai_secret_key').read_bytes()
+    (tmp_path / 'data/library.sqlite3').write_bytes(b'persisted project')
+    module.initialize(tmp_path, write_env=False)
+    assert not (tmp_path / '.env').exists()
+    assert (tmp_path / 'secrets/ai_secret_key').read_bytes() == key
+    assert (tmp_path / 'data/library.sqlite3').read_bytes() == b'persisted project'
+
+
 def test_local_key_setup_and_default_cipher(tmp_path,monkeypatch):
     import importlib.util
     from epub_proofreader.ai import engine_manager

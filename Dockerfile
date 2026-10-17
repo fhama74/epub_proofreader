@@ -6,6 +6,10 @@ COPY frontend/ ./
 RUN pnpm build
 
 FROM python:3.14-slim-bookworm
+ARG APP_REVISION=unknown
+LABEL org.opencontainers.image.source="https://github.com/fhama74/epub_proofreader" \
+    org.opencontainers.image.description="Japanese EPUB proofreader; see /app/THIRD_PARTY_NOTICES.md for component licenses" \
+    org.opencontainers.image.revision=$APP_REVISION
 WORKDIR /app
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 UV_PYTHON_DOWNLOADS=never
 RUN apt-get update && apt-get install -y --no-install-recommends default-jre-headless \
@@ -17,6 +21,7 @@ COPY backend/ ./backend/
 COPY config/ ./config/
 COPY samples/ ./samples/
 COPY scripts/install_epubcheck.py ./scripts/install_epubcheck.py
+COPY scripts/init_docker.py ./scripts/init_docker.py
 # Official distribution, version and SHA-256 verified by the installer.
 RUN .venv/bin/python scripts/install_epubcheck.py
 COPY --from=ui /src/frontend/dist ./frontend/dist

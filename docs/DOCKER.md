@@ -2,7 +2,33 @@
 
 Docker EngineとDocker Compose v2を導入したDebianで動かす構成です。PythonとNode.jsはイメージ内に入るためホストへの導入は不要です。初期設定スクリプトにはホストのPython 3を使います。
 
-## 新しく始める
+## 公開イメージで新しく始める（Git・Python不要）
+
+Docker Compose v2を利用します。Intel/AMDのLinuxとARM64（Apple Siliconを含む）に対応します。
+
+```sh
+mkdir epub-proofreader
+cd epub-proofreader
+curl -fL https://raw.githubusercontent.com/fhama74/epub_proofreader/main/compose.ghcr.yaml -o compose.yaml
+docker compose pull
+docker compose up -d
+```
+
+`http://127.0.0.1:8000/` を開きます。初期化用のコンテナが `data/` と `secrets/ai_secret_key` を準備して終了し、その後アプリが起動します。初期化用コンテナの終了コード0は正常です。既存のキーは置き換えません。既存データがあるのにキーがない場合は移行ミスを防ぐため停止します。
+
+ポート・公開先・イメージを変更する場合は、同じフォルダーに `.env` を作成します（任意）。
+
+```dotenv
+EPROOF_BIND_ADDRESS=127.0.0.1
+EPROOF_PORT=8000
+EPROOF_IMAGE=ghcr.io/fhama74/epub_proofreader:latest
+```
+
+更新は `docker compose pull`、`docker compose up -d` の順で実施します。更新前に下記の保存領域とキーをバックアップしてください。再現可能な版を固定する場合は、GHCRの `sha-<40桁のコミットID>` タグまたはダイジェストを `EPROOF_IMAGE` に指定します。
+
+初回のGHCRパッケージは所有者がGitHubのPackages設定でPublicに切り替える必要があります。公開後は利用者のGitHubログインは不要です。
+
+## ソースからビルドする場合
 
 公開用ソースのフォルダーで実行します。
 
@@ -69,6 +95,14 @@ docker compose up -d
 python3 scripts/docker_smoke.py --state /tmp/eproof-smoke.json
 ```
 
-ヘルスチェック、画面・PDF資材の配信、プロジェクト保存・再作成後の復元、実EPUBCheckを検証します。GitHub Actionsにも同じ手順を設定しています。開発MacではDocker daemonとComposeが未導入のため、コンテナビルド・Debian実機での起動は未検証です。GitHub Actionsの成功を確認してから運用へ移します。
+ヘルスチェック、画面・PDF資材の配信、プロジェクト保存・再作成後の復元、実EPUBCheckを検証します。GitHub Actionsにも同じ手順を設定しています。ソースからのDocker起動・EPUBCheck・再作成後のデータ保持はGitHub ActionsのLinux環境で検証済みです。GHCR公開時にも両CPUの構成で検証します。Debian実機とDocker Desktop実機での操作確認は別途必要です。
 
 参考：[Docker Composeのsecrets](https://docs.docker.com/compose/how-tos/use-secrets/)、[Composeの起動と設定確認](https://docs.docker.com/compose/gettingstarted/)。
+
+## イメージの公開・ライセンス
+
+GitHub Actionsの `Publish GHCR image` を手動実行するか、`v` で始まるタグをpushすると公開します。両CPUで起動・EPUBCheck・保存データとキーの保持を検証後、`latest` と `sha-<コミットID>` を公開します。タグからの実行では `v` を除いた版タグも追加します。通常のmainへのpushではイメージを更新しません。
+
+GitHub Actionsの一時的な `GITHUB_TOKEN` を使い、利用者のAPIキーや個人のGitHubトークンをイメージに入れません。初回は [Packages設定](https://github.com/users/fhama74/packages/container/epub_proofreader/settings) で公開範囲をPublicに変更してください。
+
+対応するGPL/LGPLのDebianソースとSaxonのソースは、同じコミットの `container-<コミットID>` リリースへ別添します。大きなソースアーカイブは通常のイメージ取得には含まれません。詳しくは [コンテナのソースとライセンス](CONTAINER_SOURCES.md) を参照してください。

@@ -25,15 +25,17 @@
 
 ### Docker（推奨）
 
-Docker環境では、初期化後に次のコマンドで起動できます。
+Docker Composeが使える環境なら、ソースやPythonの取得なしで起動できます。
 
 ```bash
-# 新規環境の初期化（既存環境のデータや暗号化キーは上書きしないでください）
-python3 scripts/init_docker.py
-docker compose up --build -d
+mkdir epub-proofreader
+cd epub-proofreader
+curl -fL https://raw.githubusercontent.com/fhama74/epub_proofreader/main/compose.ghcr.yaml -o compose.yaml
+docker compose pull
+docker compose up -d
 ```
 
-詳しい前提条件、データの保存・バックアップ、既存環境からの移行については [Dockerでの起動・保存・移行](docs/DOCKER.md) を参照してください。
+初回に保存先と暗号化キーを自動作成します。起動後は **http://127.0.0.1:8000/** を開いてください。詳しい設定・バックアップ・移行・ソースからのビルドは [Docker運用手順](docs/DOCKER.md) を参照してください。
 
 ### Pythonで起動
 

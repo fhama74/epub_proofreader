@@ -1,0 +1,31 @@
+services:
+  initialize:
+    image: ${EPROOF_IMAGE:-ghcr.io/fhama74/epub_proofreader:latest}
+    command: [".venv/bin/python", "scripts/init_docker.py", "--root", "/setup", "--no-env"]
+    volumes:
+      - ./data:/setup/data
+      - ./secrets:/setup/secrets
+    restart: "no"
+    security_opt:
+      - no-new-privileges:true
+  proofreader:
+    image: ${EPROOF_IMAGE:-ghcr.io/fhama74/epub_proofreader:latest}
+    depends_on:
+      initialize:
+        condition: service_completed_successfully
+    ports:
+      - "${EPROOF_BIND_ADDRESS:-127.0.0.1}:${EPROOF_PORT:-8000}:8000"
+    environment:
+      DATA_DIR: /app/data
+      AI_SECRET_KEY_FILE: /run/epub-proofreader-secrets/ai_secret_key
+      AI_ALLOWED_ORIGINS: ${AI_ALLOWED_ORIGINS:-}
+    volumes:
+      - ./data:/app/data
+      - ./secrets:/run/epub-proofreader-secrets:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    init: true
+    stop_grace_period: 30s
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true

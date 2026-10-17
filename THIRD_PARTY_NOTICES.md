@@ -36,6 +36,7 @@ Java is installed separately (by the system package manager in Docker).
 OpenJDK uses GPL-2.0 with the Classpath Exception and additional component
 notices. This does not change this application's own MIT license. Keep Java
 and system package notices and meet applicable source distribution obligations
-when redistributing container images. This repository does not publish a
-prebuilt container image. A container includes separately licensed OS packages;
+when redistributing container images. Published images have corresponding
+source archives in the matching container-<commit> GitHub release (see
+docs/CONTAINER_SOURCES.md). A container includes separately licensed OS packages;
 it must not be described as entirely MIT-licensed.
