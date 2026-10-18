@@ -150,8 +150,10 @@ def test_ruby_add_validates_overlap_empty_reading_and_stale_token(session):
 @pytest.mark.parametrize('items,expected',[
     ([{'start':1,'original':'汽','replacement':'気'},{'start':4,'original':'7','replacement':''}],2),
     ([{'start':1,'original':'汽','replacement':None}],1),
-    ([{'start':0,'original':'天汽と','replacement':None}],0),
-    ([{'start':0,'original':'天汽','replacement':None},{'start':2,'original':'と','replacement':None}],0),
+    ([{'start':0,'original':'天汽と','replacement':None}],1),
+    ([{'start':0,'original':'天汽','replacement':None},{'start':2,'original':'と','replacement':None}],2),
+    ([{'start':0,'original':'天汽と字','replacement':None}],0),
+    ([{'start':0,'original':'天汽','replacement':None},{'start':2,'original':'と字','replacement':None}],0),
     ([{'start':0,'original':'不存在','replacement':None}],0),
     ([{'start':1,'original':None,'replacement':None}],0),
 ])
@@ -160,7 +162,7 @@ def test_body_findings_are_exact_short_independent_locations(items,expected):
     values,issues=queries.assess(json.dumps({'paragraph_id':'p','findings':items}),p,q)
     assert len(values)==expected
     assert bool(issues)==(expected==0)
-    assert all(len(v['original'])<=2 for v in values)
+    assert all(len(v['original'])<=3 for v in values)
 
 
 @pytest.mark.parametrize('exception,message',[(base.httpx.ConnectError,'接続エラー'),(base.httpx.ConnectTimeout,'接続エラー'),(base.httpx.ReadTimeout,'処理の長期化、サービス停止、通信断')])

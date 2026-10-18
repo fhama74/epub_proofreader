@@ -228,8 +228,8 @@ class Worker:
             suggestions,rejected_clusters=queries.short_findings(suggestions)
             if rejected_clusters:
                 if request_context is not None:request_context.update(phase='aggregate_candidate_validation',aggregate_request_ids=request_ids)
-                diagnostics.record(self.database,ident,target_ids,query_type,attempt_number,'format','連続3文字以上の指摘は採用しません。',last_output,context=request_context)
-                for member in paragraphs:unresolved.setdefault(member['paragraph_id'],[]).append('連続3文字以上の指摘は採用しません。')
+                diagnostics.record(self.database,ident,target_ids,query_type,attempt_number,'format','連続4文字以上の指摘は採用しません。',last_output,context=request_context)
+                for member in paragraphs:unresolved.setdefault(member['paragraph_id'],[]).append('連続4文字以上の指摘は採用しません。')
             with self.database() as con:
                 con.execute('BEGIN IMMEDIATE')
                 row=con.execute('SELECT status FROM ai_jobs WHERE id=?',(ident,)).fetchone()

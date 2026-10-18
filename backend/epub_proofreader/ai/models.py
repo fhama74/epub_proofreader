@@ -30,7 +30,7 @@ class Engine(BaseModel):
     input_price:float|None=Field(default=None,ge=0,le=10000)
     output_price:float|None=Field(default=None,ge=0,le=10000)
     chunk_chars:int=Field(default=1200,ge=200,le=4000)
-    max_output_tokens:int=Field(default=2048,ge=256,le=8192)
+    max_output_tokens:int=Field(default=4096,ge=256,le=8192)
 class Start(BaseModel):
     skip_confirmed:bool=True
     batch_paragraphs:int=Field(default=1,ge=1,le=8)

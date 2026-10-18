@@ -69,7 +69,9 @@ def output_schema(q):
 def assess(reply,q):
     if q['query_type']=='body':
         try:decoded=json.loads(reply)
-        except (ValueError,TypeError):decoded=None
+        except (ValueError,TypeError):
+            from .body import assess as assess_body
+            return assess_body(reply,q['_members'][0][0],q)
         if isinstance(decoded,dict) and isinstance(decoded.get('findings'),list) and (not decoded['findings'] or any(isinstance(r,dict) and ('i' in r or 'o' in r) for r in decoded['findings'])):
             from .body import assess as assess_body
             return assess_body(reply,q['_members'][0][0],q)
@@ -90,5 +92,5 @@ def assess(reply,q):
         except ValueError as exc:issues.setdefault(pid,[]).append(f'候補{i+1}: {exc}')
     accepted,bad=single.short_findings(accepted)
     if bad:
-        for pid in members:issues.setdefault(pid,[]).append('連続3文字以上の指摘は採用しません。')
+        for pid in members:issues.setdefault(pid,[]).append('連続4文字以上の指摘は採用しません。')
     return accepted,issues

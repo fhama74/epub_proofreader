@@ -2,7 +2,7 @@ import {useState} from 'react';
 import {api} from './dialogUtils';
 import type {Engine} from './aiTypes';
 const origins={ollama:'http://localhost:11434',openai:'https://api.openai.com',gemini:'https://generativelanguage.googleapis.com',anthropic:'https://api.anthropic.com'};
-const empty={name:'',provider:'ollama' as Engine['provider'],url:origins.ollama,model:'',is_default:false,visibility:'private' as const,input_price:null as number|null,output_price:null as number|null,chunk_chars:1200,max_output_tokens:2048};
+const empty={name:'',provider:'ollama' as Engine['provider'],url:origins.ollama,model:'',is_default:false,visibility:'private' as const,input_price:null as number|null,output_price:null as number|null,chunk_chars:1200,max_output_tokens:4096};
 export default function EngineDialog({engines,onReload,onClose}:{engines:Engine[];onReload:()=>Promise<void>;onClose:()=>void}){
   const [selected,setSelected]=useState<string|null>(null);const [form,setForm]=useState({...empty});const [key,setKey]=useState('');const [models,setModels]=useState<string[]>([]);const [error,setError]=useState('');const [message,setMessage]=useState('');const [busy,setBusy]=useState(false);
   const patch=(value:Partial<typeof form>)=>setForm(f=>({...f,...value}));

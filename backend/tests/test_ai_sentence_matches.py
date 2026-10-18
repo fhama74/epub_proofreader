@@ -45,7 +45,7 @@ def test_repetition_count_uses_the_whole_sentence_across_chunks():
 
 @pytest.mark.parametrize('finding',[
     {'i':0,'o':'存在しない文字'}, {'i':0,'o':'犬'}, {'i':99,'o':'汽'},
-    {'i':'0','o':'汽'}, {'i':-1,'o':'汽'}, {'i':0,'o':''}, {'i':0,'o':'天汽。'},
+    {'i':'0','o':'汽'}, {'i':-1,'o':'汽'}, {'i':0,'o':''}, {'i':0,'o':'天汽。長'},
 ])
 def test_bad_ids_and_nonverbatim_or_long_originals_are_not_saved(finding):
     values,issues=inspect('天汽。',[finding]);assert not values and issues

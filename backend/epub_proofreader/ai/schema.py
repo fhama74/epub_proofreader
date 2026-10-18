@@ -27,3 +27,18 @@ def ensure(con):
         for e in cfg['engines']:
             con.execute('INSERT INTO ai_engines VALUES (?,?,?,?,?)',(str(uuid4()),'local',json.dumps(e),None,timestamp()))
         con.execute("INSERT INTO ai_settings VALUES ('initialized','1')")
+
+    if not con.execute("SELECT 1 FROM ai_settings WHERE key='output_default_4096'").fetchone():
+        for ident,raw in con.execute('SELECT id,config FROM ai_engines').fetchall():
+            cfg=json.loads(raw)
+            if cfg.get('max_output_tokens',2048)==2048:
+                cfg['max_output_tokens']=4096
+                con.execute('UPDATE ai_engines SET config=? WHERE id=?',(json.dumps(cfg,ensure_ascii=False),ident))
+        # Unfinished jobs can continue after restart with the expanded budget.
+        # Completed job snapshots remain an accurate record of their settings.
+        for ident,raw in con.execute("SELECT id,config FROM ai_jobs WHERE status IN ('queued','running','pause_requested','paused','interrupted','budget_paused')").fetchall():
+            cfg=json.loads(raw)
+            if cfg.get('max_output_tokens',2048)==2048:
+                cfg['max_output_tokens']=4096
+                con.execute('UPDATE ai_jobs SET config=? WHERE id=?',(json.dumps(cfg,ensure_ascii=False),ident))
+        con.execute("INSERT INTO ai_settings VALUES ('output_default_4096','1')")

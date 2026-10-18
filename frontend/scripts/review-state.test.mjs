@@ -22,3 +22,5 @@ test('ruby and body review indicators are independent',()=>{
  assert.equal(reviewStatus(paragraph,[ruby],'ruby').color,'red');
  assert.equal(reviewStatus(paragraph,[flag],'ruby').color,'yellow');
 });
+
+test('three-character body findings remain actionable and red',()=>assert.equal(reviewStatus(paragraph,[{...flag,original:'ごおう'}]).color,'red'));

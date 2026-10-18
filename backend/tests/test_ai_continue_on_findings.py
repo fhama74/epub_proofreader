@@ -36,7 +36,7 @@ def test_more_than_five_bad_paragraphs_continue_keep_good_siblings_and_finish(se
     assert j['status']=='completed_with_errors' and j['failed']==j['total']==9
     assert len(result['results'])==9 and all(r['original']=='文' for r in result['results'])
     assert len(calls)==(9 if batch==4 else 27)
-    assert all('最大2文字' in row['error'] for row in j['errors'])
+    assert all('最大3文字' in row['error'] for row in j['errors'])
     # The retained failures can still be explicitly retried, without resending
     # successfully saved candidates twice within the same job.
     assert c.post(root+f'/ai/jobs/{ident}/retry').status_code==200

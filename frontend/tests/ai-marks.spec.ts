@@ -16,3 +16,8 @@ test('mark only verified, merged Unicode ranges and preserve ruby markup',async(
  await expect(page.locator('ruby')).toHaveCount(1);
  await expect(page.locator('rt')).toHaveText('てんき');
 });
+
+test('three-character findings are marked and four-character findings are ignored',async({page})=>{
+ await page.setContent(`<p>ごおう。あいうえ。</p><script>${compiled};markAIText(document.querySelector('p'),[{start:0,end:3,original:'ごおう'},{start:4,end:8,original:'あいうえ'}]);</script>`);
+ await expect(page.locator('[data-ai-text-mark]')).toHaveText(['ごおう']);
+});

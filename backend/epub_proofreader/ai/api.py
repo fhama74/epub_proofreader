@@ -43,7 +43,7 @@ def state(con,book_id):
             if pid not in hashes:
                 try:hashes[pid]=fingerprint(editing.paragraph_details(book,pid,value['revision'],include_tokens=False))
                 except ValueError:hashes[pid]=None
-            r['stale']=r['source_hash']!=hashes[pid] or r['target']=='text' and not 1<=len(r['original'])<=2
+            r['stale']=r['source_hash']!=hashes[pid] or r['target']=='text' and not 1<=len(r['original'])<=3
         else:r['stale']=False
         results.append(r)
     for j in result_jobs:

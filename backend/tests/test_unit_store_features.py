@@ -12,6 +12,23 @@ from epub_proofreader.epub import Book
 def score(c,root):return c.get(root).json()['proof_score']
 
 
+def test_three_character_ai_finding_survives_state_and_approval(client,monkeypatch):
+    from test_ai import job,finish,parse_prompt
+    from epub_proofreader.ai.providers import PROVIDERS
+    from epub_proofreader.ai.providers.base import Reply
+    root,b=create(client)
+    def generate(cfg,system,prompt):
+        p=parse_prompt(prompt)
+        return Reply('{"findings":[{"i":0,"o":"天汽だ","r":"天気だ"}]}' if p['query_type']=='body' else '{"suggestions":[]}',1,1)
+    monkeypatch.setattr(PROVIDERS['ollama'],'generate',generate)
+    finish(job(client,root,paragraph_id=P2))
+    findings=client.get(root+'/ai').json()['results']
+    assert len(findings)==1 and not findings[0]['stale'] and findings[0]['original']=='天汽だ'
+    r=client.post(root+'/ai/results/'+findings[0]['id']+'/decision',json={'action':'approve','revision':0})
+    assert r.status_code==200,r.text
+    assert '天気だった' in detail(client,root)['editor_text']
+
+
 def test_cached_score_confirmation_updates_no_recount_and_no_double_count(client,monkeypatch):
     root,b=create(client);assert b['proof_score']['total']==8
     assert b['proof_score']['score']==0

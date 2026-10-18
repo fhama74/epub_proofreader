@@ -11,6 +11,8 @@ DEFAULTS={
 }
 LEGACY_BODY=DEFAULTS['body']
 DEFAULTS['body']='本文専用のOCR誤認識検査です。ルビの読みは検査しません。別の文字なら意味が通る誤認識、または削除すれば意味が通る混入だけを検出してください。原文の指摘は1文字または連続最大2文字に限定します。離れた複数箇所はそれぞれ別の指摘にしてください。連続3文字以上になる範囲を分割して報告しないでください。口語、文学表現、倒置、省略、反復、ひらがな表記、旧字、歴史的仮名遣い、固有名詞、当て字を許容します。判断できない場合は報告を控えてください。訂正案は確かな場合のみ返し、不明ならnullにしてください。参考例：犀根→屋根、垂麗→華麗、芸奢→華奢、感酸→威厳、鋭ぎ→鋭さ。これは置換辞書ではなく、文脈上成立する表現は変更しないでください。'
+PREVIOUS_BODY=DEFAULTS['body']
+DEFAULTS['body']=PREVIOUS_BODY.replace('最大2文字','最大3文字').replace('連続3文字以上','連続4文字以上')
 class Policy(BaseModel):
  model_config=ConfigDict(extra='forbid')
  common:str=Field(min_length=1,max_length=6000)
@@ -27,7 +29,7 @@ class Update(Policy):
 def read(con):
  row=con.execute('SELECT value FROM ai_settings WHERE key=?',('prompt_policy:'+OWNER,)).fetchone()
  data=json.loads(row[0]) if row else {'values':dict(DEFAULTS),'revision':0}
- if data['values'].get('body')==LEGACY_BODY:data['values']['body']=DEFAULTS['body']
+ if data['values'].get('body') in {LEGACY_BODY,PREVIOUS_BODY}:data['values']['body']=DEFAULTS['body']
  return {**data,'defaults':dict(DEFAULTS)}
 
 def save(con,req):

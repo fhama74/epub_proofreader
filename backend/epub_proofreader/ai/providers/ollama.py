@@ -4,11 +4,11 @@ import json
 
 def body_schema(e):
     value=schema(e)
-    # A two-character bound is small enough for supported grammar parsers. Do not
+    # A three-character bound is small enough for supported grammar parsers. Do not
     # pass large replacement/count bounds, which can reject the entire request.
     for definition in value.get('$defs',{}).values():
         props=definition.get('properties',{})
-        if set(props)=={'i','o','r'}:props['o'].update(minLength=1,maxLength=2)
+        if set(props)=={'i','o','r'}:props['o'].update(minLength=1,maxLength=3)
     return value
 
 

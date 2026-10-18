@@ -10,7 +10,7 @@ from epub_proofreader import app as module
 def test_prompt_defaults_save_reset_validation_and_conflict(session):
  c,create=session;create();first=c.get('/api/ai/prompts').json()
  assert first['values']==first['defaults'] and 'ひらがな表記' in first['values']['common']
- assert '最大2文字' in first['values']['body'] and '独自ルビ' in first['values']['ruby']
+ assert '最大3文字' in first['values']['body'] and '独自ルビ' in first['values']['ruby']
  assert '意味の近い当て字' in first['values']['ruby'] and '単語・活用形として成立しない読み' in first['values']['ruby']
  assert 'ひらがなを漢字' not in first['values']['ruby']
  saved=c.put('/api/ai/prompts',json={**first['values'],'common':'独自の検査方針','revision':0})

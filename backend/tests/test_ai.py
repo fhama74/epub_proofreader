@@ -283,7 +283,7 @@ def test_partial_candidates_are_persisted_deduplicated_and_retried(session,mock_
         return Reply(json.dumps({'paragraph_id':d['paragraph_id'],'findings':[hit(d),{'i':0,'o':'不存在','r':'変更'}]}),10,20)
     monkeypatch.setattr(PROVIDERS['ollama'],'generate',mixed);ident=job(c,root);finish(ident);s=state(c,root)
     assert len(s['results'])==1 and s['jobs'][0]['failed']==1 and s['jobs'][0]['status']=='completed_with_errors'
-    assert '最大2文字' in prompts[1] and '前回の検証結果' in prompts[1]
+    assert '指定した文にありません' in prompts[1] and '前回の検証結果' in prompts[1]
     assert '天汽' in details(c,root)['editor_text']
     def good(e,s,p):
         d=parse_prompt(p);return Reply(json.dumps({'paragraph_id':d['paragraph_id'],'findings':[hit(d)]}),10,20)
