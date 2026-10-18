@@ -15,8 +15,13 @@ def embedded_version(book):
     return int(values[0])
 
 def create(con,book_id,name,original,base=None):
+    from . import unit_store
     base=embedded_version(original) if base is None else base
-    con.execute('INSERT INTO books(id,name,original,uploaded_at,version_base) VALUES (?,?,?,?,?)',(book_id,name,original.original,timestamp(),base))
+    from datetime import timedelta
+    added=timestamp()
+    while con.execute('SELECT 1 FROM books WHERE name=? AND uploaded_at=?',(name,added)).fetchone():added=(datetime.fromisoformat(added)+timedelta(microseconds=1)).isoformat()
+    con.execute('INSERT INTO books(id,name,original,uploaded_at,version_base) VALUES (?,?,?,?,?)',(book_id,name,original.original,added,base))
+    if unit_store.USE_NEW_STORAGE:unit_store.initialize(con,book_id,original)
 
 def info(con,book_id):
     row=con.execute('SELECT name,uploaded_at,version_base FROM books WHERE id=?',(book_id,)).fetchone()

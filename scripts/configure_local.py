@@ -17,8 +17,9 @@ def configure(root=ROOT):
         print('Existing encryption key kept (value hidden).')
         return
     data = Path(os.getenv('DATA_DIR', os.getenv('EPROOF_DATA_DIR', str(root / '.data'))))
-    database = data / 'library.sqlite3'
-    if database.exists():
+    for filename in ('epub-proofreader-units.sqlite3','library.sqlite3'):
+        database = data / filename
+        if not database.exists():continue
         with sqlite3.connect('file:' + str(database.resolve()) + '?mode=ro', uri=True) as con:
             exists = con.execute("SELECT 1 FROM sqlite_master WHERE name='ai_engines'").fetchone()
             if exists and con.execute("SELECT 1 FROM ai_engines WHERE key_cipher IS NOT NULL AND key_cipher != '' LIMIT 1").fetchone():

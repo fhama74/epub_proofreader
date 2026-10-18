@@ -2,9 +2,9 @@ import {useState} from 'react';
 import type {Mapping,Paragraph,Project,ProofStatus} from './types';
 import type {ProjectPatch} from './useProject';
 export const statusLabels:Record<ProofStatus,string>={unchecked:'未確認',ai_checked:'AI確認済み',human_checked:'人間確認済み',review:'要再確認'};
-export default function ProjectPanel({project,paragraph,pdfPage,selecting,onSelecting,persist,onOpenMapping,onError}:{project:Project;paragraph?:Paragraph;pdfPage:number;selecting:boolean;onSelecting:(v:boolean)=>void;persist:(patch:ProjectPatch)=>Promise<Project>;onOpenMapping:(mapping:Mapping)=>void;onError:(s:string)=>void}){
+export default function ProjectPanel({project,paragraph,pdfPage,selecting,onSelecting,persist,onOpenMapping,onError,onStatusChange}:{onStatusChange?:()=>Promise<void>;project:Project;paragraph?:Paragraph;pdfPage:number;selecting:boolean;onSelecting:(v:boolean)=>void;persist:(patch:ProjectPatch)=>Promise<Project>;onOpenMapping:(mapping:Mapping)=>void;onError:(s:string)=>void}){
   const [busy,setBusy]=useState(false);const mappings=paragraph?project.mappings[paragraph.id] || []:[];
-  async function status(value:ProofStatus){if(!paragraph)return;setBusy(true);try{await persist({statuses:{[paragraph.id]:value}});}catch(e){onError(String(e));}finally{setBusy(false);}}
+  async function status(value:ProofStatus){if(!paragraph)return;setBusy(true);try{await persist({statuses:{[paragraph.id]:value}});await onStatusChange?.();}catch(e){onError(String(e));}finally{setBusy(false);}}
   async function addPage(){if(!paragraph || !project.pdf)return;const item={page:pdfPage,rectangle:null,pdf_sha256:project.pdf.sha256};try{await persist({mappings:{[paragraph.id]:[...mappings.filter(m=>JSON.stringify(m)!==JSON.stringify(item)),item]}});}catch(e){onError(String(e));}}
   async function remove(index:number){if(!paragraph)return;try{await persist({mappings:{[paragraph.id]:mappings.filter((_,i)=>i!==index)}});}catch(e){onError(String(e));}}
   return <div className="project-panel">

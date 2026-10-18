@@ -1,5 +1,13 @@
 /** Always translate HTTP/JSON failures into actionable messages, including Safari. */
 export class APIError extends Error {constructor(message:string,public status:number){super(message);this.name='Error';}}
+// One owner per browser tab. This also works on HTTP iPad connections.
+let owner:string;
+export function editOwner(){
+ if(!owner){try{owner=sessionStorage.getItem('eproof-edit-owner') || ''; }catch{}
+  if(!owner){owner=globalThis.crypto?.randomUUID?.() || `browser-${Date.now()}-${Math.random().toString(36).slice(2)}`;try{sessionStorage.setItem('eproof-edit-owner',owner);}catch{}}
+ }
+ return owner;
+}
 export async function readJSON<T>(response:Response):Promise<T>{
  let value:unknown;
  try{value=await response.json();}
@@ -12,7 +20,8 @@ export async function readJSON<T>(response:Response):Promise<T>{
 }
 export async function requestJSON<T>(url:string,options?:RequestInit):Promise<T>{
  let response:Response;
- try{response=await fetch(url,options);}
+ const headers=new Headers(options?.headers);headers.set('X-Edit-Owner',editOwner());
+ try{response=await fetch(url,{...options,headers});}
  catch(error){if(typeof error==='object' && error!==null && 'name' in error && error.name==='AbortError')throw error;throw new APIError('サーバーに接続できません。接続状態を確認して、もう一度操作してください。',0);}
  return readJSON<T>(response);
 }

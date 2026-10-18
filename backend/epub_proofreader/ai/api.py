@@ -49,7 +49,9 @@ def state(con,book_id):
     for j in result_jobs:
         mine=[r for r in results if r['job_id']==j['id']];j['candidates']=len(mine);j['unreviewed']=sum(r['status'] in {'pending','undone'} for r in mine)
     cleared=con.execute('SELECT COUNT(*) FROM ai_cleared_results WHERE result_id IN (SELECT id FROM ai_results WHERE book_id=? AND owner_id=?)',(book_id,em.OWNER)).fetchone()[0]
-    return {'jobs':result_jobs,'results':results,'cleared_count':cleared}
+    from .. import proof_score
+    score=proof_score.read(con,book_id)
+    return {'jobs':result_jobs,'results':results,'cleared_count':cleared,**({'proof_score':score} if score else {})}
 
 class BudgetChange(BaseModel):
     budget:float=Field(gt=0,le=10000)
@@ -177,6 +179,7 @@ def install(app,database,load_book,snapshot,data_dir):
             value=editing.state(con,book_id);active={c['id'] for c in value['commands'][:value['cursor']]}
             if row['command_id'] in active:raise HTTPException(409,'承認済みです。変更を戻す場合はUndoを使用してください。')
             if req.action=='approve':
+                if row['status']=='approved':raise HTTPException(409,'この候補は反映済みです。')
                 if row['command_id']:raise HTTPException(409,'この候補は編集履歴にあります。Redoまたは再検査を使用してください。')
                 book=editing.working_model(value);d=editing.paragraph_details(book,row['paragraph_id'],value['revision']);s=json.loads(row['data'])
                 if s.get('match_count',1)>1:raise HTTPException(409,'同じ文に複数の一致箇所があります。原本と照合し、編集欄で修正してください。')
@@ -187,6 +190,16 @@ def install(app,database,load_book,snapshot,data_dir):
                 if s['target']=='ruby':kwargs.update(ruby_index=s['ruby_index'],base=s['base_after'],reading=s['reading_after']);kind='ruby'
                 else:kwargs.update(text=s['replacement'],span_start=s['start'],span_end=s['end'],expected_span=s['original']);kind='text'
                 before_revision=value['revision']
+                from .. import unit_store
+                if unit_store.enabled(con,book_id):
+                    from types import SimpleNamespace
+                    index=s.get('ruby_index') if s['target']=='ruby' else next((x['index'] for x in d['sentences'] if x['start']<=s['start']<x['end']),None) if d['unit_mode']=='sentence' else None
+                    if s['target']=='text':kwargs['sentence_index']=index
+                    result,structural=unit_store.mutate(con,book_id,kind,SimpleNamespace(expected_token=d['token']),**kwargs)
+                    if structural:result=snapshot(book_id,editing.state(con,book_id),projects.read(con,book_id),library.info(con,book_id))
+                    con.execute("UPDATE ai_results SET status='approved',updated_at=? WHERE id=?",(editing.timestamp(),ident))
+                    con.execute('INSERT INTO ai_decisions VALUES (?,?,?,?,?)',(str(uuid4()),ident,em.OWNER,req.action,editing.timestamp()))
+                    return {'book':result}
                 value=editing.commit_edit(con,book_id,req.revision,kind,expected_token=d['token'],**kwargs)
                 if value['revision']==before_revision:raise HTTPException(409,'対象は既に修正済みです。')
                 command=value['commands'][value['cursor']-1]['id'];projects.invalidate(con,book_id,value)

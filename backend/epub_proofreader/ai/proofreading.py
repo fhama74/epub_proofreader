@@ -8,15 +8,39 @@ SYSTEM='''あなたは日本語縦書き書籍のOCR復元校正者です。本�
 SYSTEM += '\n原文originalはtargetからコピーし、周囲を含めた短い連続した語句で示す。例：対象「縁起が7いい。」ならoriginal「縁起が7いい」、replacement「縁起がいい」、start=0、end=6。対象「近づい地てくる。」ならoriginal「近づい地てくる」、replacement「近づいてくる」、start=0、end=7。入力にない文字列は絶対に提案しない。'
 SYSTEM += '\nルビの入力はindex/base/readings/start/endです。base_afterとreading_afterには変更後の親文字と読みをそのまま入れ、HTMLや括弧付きルビ表記は入れない。変更のないルビは返さない。本文候補ではruby_index/base_after/reading_afterはすべてnull。ルビ候補はtarget=ruby、original=入力base、replacement=base_after。原文を完全にコピーできない候補は返さない。'
 def fingerprint(details):
-    return hashlib.sha256(json.dumps({'text':details['editor_text'],'rubies':details['rubies']},sort_keys=True,ensure_ascii=False).encode()).hexdigest()
+    evidence={'text':details['editor_text'],'rubies':details['rubies']}
+    if 'unit_version' in details:evidence.update(unit_id=details['id'],unit_version=details['unit_version'])
+    return hashlib.sha256(json.dumps(evidence,sort_keys=True,ensure_ascii=False).encode()).hexdigest()
 
 def payloads(book,ids):
     allp=[(c,p) for c in book.chapters for p in c['paragraphs']];items=[]
     for i,(c,p) in enumerate(allp):
         if p['id'] not in ids:continue
         d=editing.paragraph_details(book,p['id'],0,include_tokens=False)
-        items.append({'paragraph_id':p['id'],'chapter_id':c['id'],'text':d['editor_text'],'rubies':d['rubies'],'source_hash':fingerprint(d),'previous':allp[i-1][1]['text'][-600:] if i else '', 'next':allp[i+1][1]['text'][:600] if i+1<len(allp) else ''})
+        items.append({'paragraph_id':p['id'],'chapter_id':c['id'],'text':d['editor_text'],'rubies':d['rubies'],'source_hash':fingerprint(d),'previous':allp[i-1][1]['text'][-600:] if i else '', 'next':allp[i+1][1]['text'][:600] if i+1<len(allp) else '',**({'unit_version':d['unit_version']} if 'unit_version' in d else {})})
     return items
+
+def latest(con,book_id,queued):
+    """Read only the current leaf. A disappeared ID is never remapped by position."""
+    from .. import unit_store
+    if not unit_store.enabled(con,book_id):return queued
+    try:d=unit_store.direct_details(con,book_id,queued['paragraph_id'])
+    except ValueError:return None
+    location=con.execute('SELECT chapter_id,previous_id,next_id FROM unit_locations WHERE book_id=? AND unit_id=?',(book_id,queued['paragraph_id'])).fetchone()
+    if location is None:return None
+    context=[]
+    for ident in location[1:]:
+        r=con.execute("SELECT record FROM unit_nodes WHERE book_id=? AND id=? AND active=1",(book_id,ident)).fetchone()
+        context.append(json.loads(r[0])['text'] if r else '')
+    return {**queued,'chapter_id':location[0],'text':d['editor_text'],'rubies':d['rubies'],'source_hash':fingerprint(d),'unit_version':d['unit_version'],'previous':context[0][-600:],'next':context[1][:600]}
+
+def unchanged(con,book_id,paragraphs):
+    from .. import unit_store
+    if not unit_store.enabled(con,book_id):return True
+    for p in paragraphs:
+        r=con.execute('SELECT version,active FROM unit_nodes WHERE book_id=? AND id=?',(book_id,p['paragraph_id'])).fetchone()
+        if not r or not r[1] or r[0]!=p['unit_version']:return False
+    return True
 
 def chunks(p,size):
     text=p['text'];start=0

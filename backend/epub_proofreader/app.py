@@ -13,7 +13,8 @@ from typing import Literal
 from . import editing, projects, library
 from .ai import schema as ai_schema
 from .validation import epubcheck
-from fastapi import FastAPI, UploadFile, HTTPException
+from fastapi import FastAPI, UploadFile, HTTPException,Request
+from . import unit_store,proof_score,maintenance
 from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 from .epub import Book, EpubError, MAX_UPLOAD
@@ -23,9 +24,12 @@ DATA_DIR = Path(os.getenv("DATA_DIR",os.getenv("EPROOF_DATA_DIR", str(ROOT / ".d
 app = FastAPI(title="EPUB Proofreader", version="0.5.8")
 
 @contextmanager
-def database():
+def _database():
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    con = sqlite3.connect(DATA_DIR / "library.sqlite3")
+    if unit_store.USE_NEW_STORAGE:unit_store.prepare_database(DATA_DIR)
+    con = sqlite3.connect(DATA_DIR / (unit_store.DB_NAME if unit_store.USE_NEW_STORAGE else 'library.sqlite3'),timeout=10)
+    con.execute('PRAGMA busy_timeout=10000')
+    if unit_store.USE_NEW_STORAGE:con.execute('PRAGMA journal_mode=WAL')
     con.execute("PRAGMA foreign_keys=ON")
     con.execute("CREATE TABLE IF NOT EXISTS books (id TEXT PRIMARY KEY, name TEXT NOT NULL, original BLOB NOT NULL)")
     con.execute("CREATE TABLE IF NOT EXISTS editing (book_id TEXT PRIMARY KEY REFERENCES books(id),working BLOB NOT NULL,revision INTEGER NOT NULL,commands TEXT NOT NULL,cursor INTEGER NOT NULL,history TEXT NOT NULL,ids TEXT NOT NULL DEFAULT '{}')")
@@ -39,16 +43,40 @@ def database():
             except sqlite3.OperationalError:
                 if column not in {row[1] for row in con.execute('PRAGMA table_info(books)')}:raise
     con.execute("CREATE TABLE IF NOT EXISTS publications (book_id TEXT NOT NULL REFERENCES books(id),version INTEGER NOT NULL,published_at TEXT NOT NULL,revision INTEGER NOT NULL,sha256 TEXT NOT NULL,epub BLOB NOT NULL,validation TEXT NOT NULL,request_id TEXT NOT NULL,PRIMARY KEY(book_id,version),UNIQUE(book_id,request_id))")
+    con.execute('CREATE UNIQUE INDEX IF NOT EXISTS project_filename_upload ON books(name,uploaded_at) WHERE uploaded_at IS NOT NULL')
     con.execute("CREATE TABLE IF NOT EXISTS projects (book_id TEXT PRIMARY KEY REFERENCES books(id), metadata TEXT NOT NULL, pdf BLOB)")
     con.execute("CREATE TABLE IF NOT EXISTS editing_removed(book_id TEXT NOT NULL REFERENCES books(id) ON DELETE CASCADE,path TEXT NOT NULL,PRIMARY KEY(book_id,path))")
     con.execute("CREATE TABLE IF NOT EXISTS editing_files(book_id TEXT NOT NULL REFERENCES books(id) ON DELETE CASCADE,path TEXT NOT NULL,content BLOB NOT NULL,PRIMARY KEY(book_id,path))")
     ai_schema.ensure(con)
+    unit_store.ensure(con)
     con.commit()
+    if unit_store.USE_NEW_STORAGE and con.execute('SELECT 1 FROM books WHERE id NOT IN (SELECT book_id FROM unit_books) LIMIT 1').fetchone():
+        con.execute('BEGIN IMMEDIATE')
+        try:unit_store.migrate_all(con);con.commit()
+        except Exception:con.rollback();con.close();raise
+    missing=con.execute('SELECT book_id FROM unit_books WHERE book_id NOT IN (SELECT book_id FROM proof_scores)').fetchall()
+    if missing:
+        con.execute('BEGIN IMMEDIATE')
+        try:
+            for book_id, in missing:proof_score.rebuild(con,book_id)
+            con.commit()
+        except Exception:con.rollback();con.close();raise
     try:
         with con:
             yield con
     finally:
         con.close()
+
+@contextmanager
+def database():
+    with maintenance.access():
+        with _database() as con:yield con
+
+@app.middleware('http')
+async def unit_owner(request:Request,call_next):
+    token=unit_store.edit_owner.set(request.headers.get('X-Edit-Owner'))
+    try:return await call_next(request)
+    finally:unit_store.edit_owner.reset(token)
 
 @lru_cache(maxsize=4)
 def load_book(book_id: str):
@@ -105,7 +133,7 @@ async def import_book(file: UploadFile):
     book_id = str(uuid.uuid4())
     with database() as con:
         library.create(con,book_id,Path(file.filename).name,book)
-        if book.import_repairs:
+        if book.import_repairs and not unit_store.USE_NEW_STORAGE:
             editing.save_state(con,book_id,{'working':book.normalized,'revision':0,'commands':[],'cursor':0,'history':[],'ids':{}})
     return snapshot(book_id)
 
@@ -198,11 +226,17 @@ def snapshot(book_id,value=None,metadata=None,catalog=None):
         with database() as con:metadata=projects.read(con,book_id)
     if catalog is None:
         with database() as con:catalog=library.info(con,book_id)
+    if value.get('proof_score') is not None:result['proof_score']=value['proof_score']
     result['import_repairs']=original.import_repairs
     result['warnings']=list(dict.fromkeys([*original.warnings,*result['warnings']]))
     originals = {p['id']:p for c in original.chapters for p in [*c['paragraphs'],*c.get('headings',[])]}
     for chapter in result['chapters']:
         for paragraph in [*chapter['paragraphs'],*chapter.get('headings',[])]:
+            if result.get('storage_mode')=='units':
+                from . import reviews
+                paragraph['review_state']=reviews.both(metadata,reviews.record_details(paragraph));paragraph['status']='human_checked' if paragraph['review_state']['body']['confirmed'] else metadata['statuses'].get(paragraph['id'],'unchecked')
+                if paragraph['status']=='human_checked' and not paragraph['review_state']['body']['confirmed']:paragraph['status']='review'
+                continue
             previous = originals.get(paragraph['id'],{'original_xml':'','text':''})
             paragraph['current_xml'] = paragraph['original_xml']
             paragraph['edited'] = paragraph['original_xml'] != previous['original_xml']
@@ -220,6 +254,16 @@ def mutate(book_id,request,kind,**kwargs):
     load_book(book_id)
     with database() as con:
         con.execute('BEGIN IMMEDIATE')
+        if unit_store.enabled(con,book_id):
+            if kind in {'undo','redo'}:raise EpubError('Undo／Redoは廃止しました。')
+            if kind=='replace':
+                unit_store.replace(con,book_id,request,kwargs.get('paragraph_id'),kwargs['target'],kwargs['replacement'])
+                return snapshot(book_id,editing.state(con,book_id),projects.read(con,book_id),library.info(con,book_id))
+            result,structural=unit_store.mutate(con,book_id,kind,request,**kwargs)
+            if not structural:return result
+            value=editing.state(con,book_id);result_book=snapshot(book_id,value,projects.read(con,book_id),library.info(con,book_id))
+            if result:result_book['focus_paragraph_id']=result
+            return result_book
         before_revision=editing.state(con,book_id)['revision']
         value = editing.commit_edit(con,book_id,request.revision,kind,reason=request.reason,expected_token=getattr(request,'expected_token',None),expected_chapter_token=getattr(request,'expected_chapter_token',None),**kwargs)
         if value['revision']!=before_revision:projects.invalidate(con,book_id,value)
@@ -243,11 +287,29 @@ def mutate(book_id,request,kind,**kwargs):
 
 @app.get('/api/books/{book_id}/paragraphs/{paragraph_id}')
 def editor(book_id: str,paragraph_id: str):
+    with database() as con:
+        if unit_store.enabled(con,book_id):return unit_store.direct_details(con,book_id,paragraph_id)
     value = current_state(book_id)
     d=editing.paragraph_details(editing.working_model(value),paragraph_id,value['revision'])
     from . import reviews
     with database() as con:d['review_state']=reviews.both(projects.read(con,book_id),d)
     return d
+
+@app.post('/api/books/{book_id}/paragraphs/{paragraph_id}/lock')
+def acquire_unit_lock(book_id:str,paragraph_id:str):
+    with database() as con:
+        con.execute('BEGIN IMMEDIATE')
+        if unit_store.enabled(con,book_id):unit_store.lock(con,book_id,paragraph_id,unit_store.edit_owner.get())
+    return {'expires_in':60}
+
+@app.delete('/api/books/{book_id}/paragraphs/{paragraph_id}/lock')
+def release_unit_lock(book_id:str,paragraph_id:str):
+    with database() as con:
+        con.execute('BEGIN IMMEDIATE')
+        if unit_store.enabled(con,book_id):
+            # A deleted unit may disappear before an editor unmounts.
+            con.execute('DELETE FROM unit_locks WHERE book_id=? AND unit_id=? AND owner=?',(book_id,paragraph_id,unit_store.edit_owner.get()))
+    return {'released':True}
 
 class ReviewDraftRuby(BaseModel):
     base:str=Field(max_length=1000)
@@ -318,6 +380,9 @@ def reset_review(book_id:str,request:ReviewReset):
         ids=[p['id'] for c in book.chapters if request.scope!='chapter' or c['id']==request.chapter_id for p in [*c['paragraphs'],*c.get('headings',[])] if request.scope!='paragraph' or p['id']==request.paragraph_id]
         if not ids:raise EpubError('対象の段落がありません。')
         for pid in ids:
+            if unit_store.enabled(con,book_id):
+                targets=('body','ruby') if request.target=='both' else (request.target,)
+                for target in targets:con.execute('DELETE FROM unit_reviews WHERE book_id=? AND unit_id=? AND target=?',(book_id,pid,target))
             d=editing.paragraph_details(book,pid,value['revision']);was=reviews.summary(meta,d)['confirmed']
             row=meta.setdefault('reviews',{}).setdefault(pid,{})
             if was and 'body' not in row:row['body']={'all':reviews.digest(d['editor_text'])}
@@ -325,6 +390,8 @@ def reset_review(book_id:str,request:ReviewReset):
                 if request.target in {target,'both'}:row[target]={}
             meta['statuses'][pid]='human_checked' if reviews.summary(meta,d)['confirmed'] else 'unchecked'
         meta['version']+=1;projects.write(con,book_id,meta)
+        if unit_store.enabled(con,book_id):proof_score.rebuild(con,book_id,book)
+        value['proof_score']=proof_score.read(con,book_id)
         result=snapshot(book_id,value,meta,library.info(con,book_id))
     return result
 
@@ -377,6 +444,7 @@ def replace(book_id: str,request: ReplaceRequest):
 def history(book_id: str):
     original = load_book(book_id)
     value = current_state(book_id)
+    if isinstance(value['working'],unit_store.Source):raise HTTPException(410,'操作履歴の保存は廃止しました。作業データ（.eproof）を書き出してください。')
     return projects.history_export(original,value)
 
 @app.get('/api/books/{book_id}/export')

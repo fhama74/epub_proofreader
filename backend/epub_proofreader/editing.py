@@ -68,6 +68,8 @@ def ruby_limits(item):
     return {'range_min':start-len(left),'range_max':end+len(right),'range_editable':range_editable}
 
 def paragraph_details(book, paragraph_id, revision, *, include_tokens=True,include_chapter_token=True):
+    from .unit_store import UnitBook,details
+    if isinstance(book,UnitBook):return details(book,paragraph_id,revision,include_tokens,include_chapter_token)
     chapter, record, _, pieces, text = text_layout(book, paragraph_id)
     _,_,ruby_ranges=layout(locate_paragraph(book,paragraph_id)[2])
     rubies=[{**ruby,'index':index,'start':ruby_ranges[index][1],'end':ruby_ranges[index][2],**ruby_limits(ruby_ranges[index])} for index,ruby in enumerate(record['rubies'])]
@@ -187,6 +189,8 @@ def apply_changes(book, changes, reverse=False):
     return WorkingFiles.merge(book.original,replacements)
 
 def repack(data, replacements=None):
+    from .unit_store import Source
+    if isinstance(data,Source):data=data.materialize()
     replacements = replacements or {}
     if isinstance(data,WorkingFiles):
         replacements={**dict(data.replacements),**replacements};data=data.base
@@ -212,6 +216,11 @@ def structure(tree):
     return [(e.tag if isinstance(e.tag,str) else type(e).__name__, sorted(e.attrib.items()), len(e)) for e in tree.iter()]
 
 def validate_export(original, working, commands=()):
+    from .unit_store import UnitBook
+    if isinstance(working,UnitBook):
+        result=working.source.materialize();checked=Book(result)
+        if set(checked.files)!=set(original.files):raise EpubError('XHTMLの追加・削除が発生しています。')
+        return result,dict(status='passed',changed_xhtml=[p for p in checked.trees if checked.get(p)!=original.get(p)],file_count=len(checked.files),structure_preserved=True)
     result = repack(working.original)
     checked = Book(result)
     if any(c.get('action') in {'chapter_split','chapter_merge','delete'} for c in commands):
@@ -262,6 +271,9 @@ def validate_chapter_export(original,checked,result,commands):
 def initial_working(data):return Book(data,repair_import=True).normalized
 
 def state(con, book_id):
+    from . import unit_store
+    if unit_store.enabled(con,book_id):
+        return unit_store.state(con,book_id,con.execute('SELECT original FROM books WHERE id=?',(book_id,)).fetchone()[0])
     row = con.execute('SELECT working,revision,commands,cursor,history,ids FROM editing WHERE book_id=?',(book_id,)).fetchone()
     if row is None:
         row = con.execute('SELECT original FROM books WHERE id=?',(book_id,)).fetchone()
@@ -276,10 +288,13 @@ def cached_model(source,ids):
     return Book(source).apply_ids(json.loads(ids))
 
 def working_model(value):
+    from .unit_store import Source
+    if isinstance(value['working'],Source):return value['working'].model()
     source=WorkingFiles.merge(value['working'])
     return cached_model(source,json.dumps(value.get('ids',{}),sort_keys=True))
 
 def edit_info(value):
+    if 'unit_edits' in value:return dict(revision=value['revision'],can_undo=False,can_redo=False,edit_count=value['unit_edits'],history_count=0)
     return {'revision':value['revision'], 'can_undo':value['cursor'] > 0 and value['commands'][value['cursor']-1].get('undoable',True), 'can_redo':value['cursor'] < len(value['commands']), 'edit_count':value['cursor'], 'history_count':len(value['history'])}
 
 def save_state(con, book_id, value):

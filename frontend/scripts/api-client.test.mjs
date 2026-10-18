@@ -30,7 +30,7 @@ test('chapter reload and multipart uploads share JSON error handling',async()=>{
  await withFetch(async(_url,options)=>{received=options;return new Response('<html>proxy error</html>',{status:502});},async()=>{
   await assert.rejects(requestJSON('/api/books',{method:'POST',body:form}),e=>e instanceof APIError && e.status===502 && !e.message.includes('proxy error'));
  });
- assert.equal(received.body,form);assert.equal(received.headers,undefined);
+ assert.equal(received.body,form);assert.ok(received.headers.get('X-Edit-Owner'));assert.equal(received.headers.has('Content-Type'),false);
  await assert.rejects(readJSON(new Response('invalid chapter response')),e=>e instanceof APIError && e.message.includes('返答'));
 });
 test('aborted chapter requests remain silent AbortErrors on fetch and body read',async()=>{

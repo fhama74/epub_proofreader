@@ -56,4 +56,11 @@ def restore(con,book_id,data,value):
                 if 'job_id' in r:r['job_id']=jobmap[r['job_id']]
                 # Snapshot jobs stay archived: imported files can never initiate network calls.
                 cols=columns.split(',');con.execute(f"INSERT INTO {table} ({columns}) VALUES ({','.join('?' for _ in cols)})",[r[k] for k in cols])
+                if key=='results':
+                    from .. import unit_store
+                    from .proofreading import fingerprint
+                    if unit_store.enabled(con,book_id):
+                        try:d=unit_store.direct_details(con,book_id,r['paragraph_id'])
+                        except ValueError:continue
+                        if fingerprint(d)==r['source_hash']:con.execute('INSERT INTO ai_result_units VALUES (?,?,?,?,?)',(r['id'],r['paragraph_id'],d['unit_version'],suggestion['start'],suggestion['end']))
     except (ValueError,TypeError,KeyError,sqlite3.Error):raise EpubError('AI校正バックアップの形式・関連IDが不正です。') from None

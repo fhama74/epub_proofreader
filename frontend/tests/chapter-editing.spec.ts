@@ -1,7 +1,7 @@
 import {test,expect} from '@playwright/test';
 import {newProject,menuAction} from './helpers';
 
-test('insert after a heading, split a chapter and undo the chapter creation',async({page})=>{
+test('insert after a heading, split a chapter and persist the chapter creation',async({page})=>{
  await newProject(page);
  await page.frameLocator('iframe').getByText('第一章　午後の庭',{exact:true}).click();
  await expect(page.getByLabel('本文を編集',{exact:true})).toHaveValue('第一章　午後の庭');
@@ -19,16 +19,17 @@ test('insert after a heading, split a chapter and undo the chapter creation',asy
  await chapter.getByRole('button',{name:'章を作成',exact:true}).click();await expect(chapter).toHaveCount(0);
  expect((await (await saved).json()).chapters[1].heading_level).toBe(2);
  await expect(page.getByLabel('章の選択',{exact:true})).toHaveValue('1');
- await expect(page.getByLabel('本文を編集',{exact:true})).toHaveValue('追加した段落。');
+ await expect(page.getByLabel('本文を編集',{exact:true})).toHaveValue('追加した章');
  await expect(page.getByLabel('章の選択',{exact:true}).locator('option')).toHaveCount(3);
- await menuAction(page,'Undo');await expect(page.getByLabel('章の選択',{exact:true}).locator('option')).toHaveCount(2);
+ await page.reload();await expect(page.getByLabel('章の選択',{exact:true}).locator('option')).toHaveCount(3);
 });
 
-test('a non-JSON error during the chapter refresh after update stays actionable',async({page})=>{
+test('a non-JSON error during compact update stays actionable and preserves the draft',async({page})=>{
  await newProject(page);await page.getByLabel('次の段落・文',{exact:true}).click();
  const body=page.getByLabel('本文を編集',{exact:true});await expect(body).toHaveValue('今日は良い天汽だった。庭の向こうで、小さな鳥が鳴いている。');
- await page.route('**/chapters/chapter0001',route=>route.fulfill({status:502,contentType:'text/html',body:'<html>private proxy failure</html>'}));
+ await page.route('**/paragraphs/*',route=>route.request().method()==='PATCH'?route.fulfill({status:502,contentType:'text/html',body:'<html>private proxy failure</html>'}):route.continue());
  await body.fill('今日は良い天気だった。庭の向こうで、小さな鳥が鳴いている。');await page.getByRole('button',{name:'更新',exact:true}).click();
  await expect(page.getByRole('alert').filter({hasText:'HTTP 502'})).toBeVisible();
  await expect(page.getByText('private proxy failure',{exact:false})).toHaveCount(0);
+ await expect(body).toHaveValue('今日は良い天気だった。庭の向こうで、小さな鳥が鳴いている。');
 });

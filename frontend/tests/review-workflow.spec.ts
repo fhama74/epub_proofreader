@@ -31,36 +31,31 @@ test('review badge changes on confirmation/reset; touch ruby addition and remova
  await page.getByLabel('ルビ一覧を閉じる',{exact:true}).click();await expect(body).toHaveValue(text);
 });
 
-test('two browsers save different paragraphs and preserve a conflicting input',async({page,browser,baseURL})=>{
+test('two browsers save different paragraphs and a shared paragraph is protected by a lease',async({page,browser,baseURL})=>{
  await newProject(page);const id=(await page.evaluate(()=>localStorage.getItem('lastBook')))!;
+ await page.getByLabel('次の段落・文',{exact:true}).click();
+ const firstText=page.getByLabel('本文を編集',{exact:true});await expect(firstText).toHaveValue(/天汽/);
  const other=await browser.newContext({baseURL,viewport:{width:1440,height:960}});
  try{
   await other.addInitScript(id=>localStorage.setItem('lastBook',id),id);
   const second=await other.newPage();await second.goto('/');
-  await expect(second.getByLabel('本文を編集',{exact:true})).toBeEnabled();
-  await page.getByLabel('次の段落・文',{exact:true}).click();
-  await second.getByLabel('次の段落・文',{exact:true}).click();
-  await second.getByLabel('次の段落・文',{exact:true}).click();
-  const firstText=page.getByLabel('本文を編集',{exact:true}),secondText=second.getByLabel('本文を編集',{exact:true});
+  const secondText=second.getByLabel('本文を編集',{exact:true});
+  await expect(secondText).toBeEnabled();await expect(secondText).toHaveValue(/吾輩/);
   const a=await firstText.inputValue(),b=await secondText.inputValue();
   await firstText.fill(a+'甲。');await secondText.fill(b+'乙。');
   await page.getByRole('button',{name:'更新',exact:true}).click();
-  await second.getByRole('button',{name:'更新',exact:true}).click();
-  await expect(second.getByLabel('章の選択',{exact:true})).toHaveValue('1');
-  await second.getByLabel('前の段落・文',{exact:true}).click();
-  await expect(second.getByLabel('現在の本文',{exact:true})).toHaveText(b+'乙。');
-  // Refresh A at the third paragraph, then let B save a conflicting change.
   await expect(firstText).toHaveValue(/書物/);
-  await page.getByLabel('前の段落・文',{exact:true}).click();
-  await page.getByLabel('次の段落・文',{exact:true}).click();
-  await expect(firstText).toHaveValue(b+'乙。');
-  await firstText.fill(b+'未保存。');await secondText.fill(b+'乙。追加。');
   await second.getByRole('button',{name:'更新',exact:true}).click();
-  await expect(second.getByLabel('章の選択',{exact:true})).toHaveValue('1');
-  await second.getByLabel('前の段落・文',{exact:true}).click();
-  await expect(second.getByLabel('現在の本文',{exact:true})).toHaveText(b+'乙。追加。');
-  await page.getByRole('button',{name:'更新',exact:true}).click();
-  await expect(page.getByRole('alert').filter({hasText:'この段落は別のブラウザーで変更'})).toBeVisible();
-  await expect(firstText).toHaveValue(b+'未保存。');
+  await expect(secondText).toHaveValue(a+'甲。');
+  await expect(secondText).toBeEnabled();
+  const stored=await (await second.request.get('/api/books/'+id)).json();
+  expect(stored.chapters[0].paragraphs[0].text).toBe(b+'乙。');
+  expect(stored.chapters[0].paragraphs[1].text).toBe(a+'甲。');
+  const draft=(await firstText.inputValue())+'未保存。';await firstText.fill(draft);
+  await second.getByLabel('次の段落・文',{exact:true}).click();
+  await expect(second.getByRole('alert').filter({hasText:'別のブラウザーで編集中'})).toBeVisible();
+  await expect(secondText).toBeDisabled();
+  await expect(second.getByRole('button',{name:'更新',exact:true})).toBeDisabled();
+  await expect(firstText).toHaveValue(draft);
  }finally{await other.close();}
 });

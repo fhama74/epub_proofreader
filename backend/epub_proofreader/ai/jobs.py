@@ -8,7 +8,7 @@ from .. import editing
 from . import engine_manager as em
 from .models import Engine
 from .providers import PROVIDERS
-from .proofreading import payloads,candidate_key,estimate
+from .proofreading import payloads,candidate_key,estimate,latest,unchanged
 from . import queries,batching,prompts,diagnostics
 from .providers.base import ResponseFormatError
 from .. import reviews,projects
@@ -39,7 +39,8 @@ def start(con,book_id,req,*,prepared=None):
     if prior:return prior[0]
     e,items,quote=prepared if prepared is not None else prepare(con,book_id,req)
     if prepared is not None:
-        revision=con.execute('SELECT revision FROM editing WHERE book_id=?',(book_id,)).fetchone()
+        from .. import unit_store
+        revision=con.execute('SELECT revision FROM '+('unit_books' if unit_store.enabled(con,book_id) else 'editing')+' WHERE book_id=?',(book_id,)).fetchone()
         if (revision[0] if revision else 0)!=req.revision:raise HTTPException(409,'本文が更新されました。対象を確認して開始し直してください。')
         if any(e.get(k)!=v for k,v in em.engine(con,req.engine_id).items()):raise HTTPException(409,'AIエンジンの設定が変更されました。確認して開始し直してください。')
     if e['provider']!='ollama':
@@ -56,7 +57,11 @@ def start(con,book_id,req,*,prepared=None):
         for p in items:
             pid=p['paragraph_id']
             meta.setdefault('reviews',{}).pop(pid,None);meta['statuses'][pid]='unchecked'
+            con.execute('DELETE FROM unit_reviews WHERE book_id=? AND unit_id=?',(book_id,pid))
         meta['version']+=1;projects.write(con,book_id,meta)
+        from .. import unit_store,proof_score
+        if unit_store.enabled(con,book_id):
+            for p in items:proof_score.refresh_unit(con,book_id,p['paragraph_id'],unit_store.direct_details(con,book_id,p['paragraph_id']),meta)
     for i,p in enumerate(items):con.execute('INSERT INTO ai_items VALUES (?,?,?,?,?,?,?)',(ident,i,p['paragraph_id'],p['chapter_id'],json.dumps(p,ensure_ascii=False),'pending',None))
     return ident
 
@@ -112,6 +117,11 @@ class Worker:
     def unknown_usage(self,ident,cfg):
         with self.database() as con:
             if con.execute('SELECT 1 FROM ai_jobs WHERE id=?',(ident,)).fetchone():con.execute('INSERT INTO ai_usage VALUES (?,?,?,?,?,?,?)',(str(uuid4()),ident,em.OWNER,None,None,0 if cfg['provider']=='ollama' else None,editing.timestamp()))
+    def requeue_changed(self,ident,book_id,items,paragraphs):
+        with self.database() as con:
+            if unchanged(con,book_id,paragraphs):return False
+            con.executemany("UPDATE ai_items SET status='pending',error=NULL WHERE job_id=? AND ordinal=?",[(ident,i['ordinal']) for i in items])
+        return True
     def step(self,ident):
         with self.database() as con:
             con.execute('BEGIN IMMEDIATE');con.row_factory=__import__('sqlite3').Row
@@ -122,7 +132,10 @@ class Worker:
             item=con.execute("SELECT * FROM ai_items WHERE job_id=? AND status='pending' ORDER BY ordinal LIMIT 1",(ident,)).fetchone()
             if not item:
                 failed=con.execute("SELECT COUNT(*) FROM ai_items WHERE job_id=? AND status='failed'",(ident,)).fetchone()[0]
-                con.execute('UPDATE ai_jobs SET status=?,finished_at=? WHERE id=?',('completed_with_errors' if failed else 'completed',editing.timestamp(),ident));return
+                con.execute('UPDATE ai_jobs SET status=?,finished_at=? WHERE id=?',('completed_with_errors' if failed else 'completed',editing.timestamp(),ident))
+                from .. import proof_score
+                if not failed and job['scope']=='book' and proof_score.read(con,job['book_id']) is not None and con.execute("SELECT 1 FROM ai_items WHERE job_id=? AND status='done' LIMIT 1",(ident,)).fetchone():proof_score.complete_ai(con,job['book_id'])
+                return
             raw_cfg=json.loads(job['config']);items=[item];size=len(json.loads(item['payload'])['text'])
             if raw_cfg.get('batch_paragraphs',1)>1:
                 pending=con.execute("SELECT * FROM ai_items WHERE job_id=? AND status='pending' AND ordinal>? ORDER BY ordinal LIMIT ?",(ident,item['ordinal'],raw_cfg['batch_paragraphs']-1)).fetchall()
@@ -130,17 +143,26 @@ class Worker:
                     n=len(json.loads(other['payload'])['text'])
                     if other['chapter_id']!=item['chapter_id'] or other['ordinal']!=items[-1]['ordinal']+1 or size+n>raw_cfg['chunk_chars']:break
                     items.append(other);size+=n
+            refreshed=[]
+            for selected in items:
+                fresh=latest(con,job['book_id'],json.loads(selected['payload']))
+                if fresh is None:
+                    con.execute("UPDATE ai_items SET status='done',error=NULL WHERE job_id=? AND ordinal=?",(ident,selected['ordinal']));continue
+                selected=dict(selected);selected.update(payload=json.dumps(fresh,ensure_ascii=False),chapter_id=fresh['chapter_id'])
+                con.execute('UPDATE ai_items SET payload=?,chapter_id=? WHERE job_id=? AND ordinal=?',(selected['payload'],selected['chapter_id'],ident,selected['ordinal']));refreshed.append(selected)
+            items=refreshed
+            if not items:return
             con.execute("UPDATE ai_jobs SET status='running' WHERE id=?",(ident,))
             con.executemany("UPDATE ai_items SET status='running' WHERE job_id=? AND ordinal=?",[(ident,i['ordinal']) for i in items])
         paragraphs=[json.loads(i['payload']) for i in items];p=paragraphs[0];cfg=Engine(**raw_cfg).model_dump(exclude={'api_key'});cfg['id']=job['engine_id'];cfg['_prompt_policy']=raw_cfg.get('prompt_policy');suggestions=[];unresolved={}
-        last_output=None;query_type=None;attempt_number=None;recorded_exception=False
+        last_output=None;query_type=None;attempt_number=None;recorded_exception=False;request_context=None;request_ids=[]
         target_ids=[member['paragraph_id'] for member in paragraphs]
         try:
             plans=batching.plans(paragraphs,raw_cfg['batch_paragraphs'],cfg['chunk_chars']) if raw_cfg.get('batch_paragraphs',1)>1 else queries.queries(p,cfg['chunk_chars'])
             with self.database() as con:cfg['api_key']=em.engine(con,job['engine_id'],True).get('api_key')
             if cfg['provider']!='ollama' and not cfg['api_key']:raise ValueError('APIキーがありません。')
             for query in plans:
-                last_output=None;query_type=query.get('query_type');attempt_number=None;recorded_exception=False
+                last_output=None;query_type=query.get('query_type');attempt_number=None;recorded_exception=False;request_context=None
                 with self.database() as con:
                     if query.get('_batch'):
                         needed=[(member,part) for member,part in ((member,reviews.query_needed(con,job['book_id'],member,part,raw_cfg.get('skip_confirmed',True))) for member,part in query['_members']) if part is not None]
@@ -165,44 +187,56 @@ class Worker:
                             con.execute("UPDATE ai_jobs SET status='budget_paused',error='設定した利用上限額に達する可能性があるため停止しました。' WHERE id=?",(ident,));con.executemany("UPDATE ai_items SET status='pending' WHERE job_id=? AND ordinal=?",[(ident,i['ordinal']) for i in items])
                             diagnostics.stopped(con,ident,'設定した利用上限額に達する可能性があるため停止しました。')
                         return
+                    system=queries.system(query,cfg.get('_prompt_policy'))
+                    prompt=queries.prompt(query)+('\n前回の検証結果：'+feedback+'\n原文から正確に照合できる候補のみ返してください。修正案が不明な時はnullとし、変更のない箇所は除外してください。' if attempt else '')
+                    request_context=diagnostics.capture(self.database,job['book_id'],query,p,cfg,system,prompt)
+                    request_ids.append(request_context['request_id'])
+                    # No transaction/lease is held while the AI performs inference.
+                    # If a user saved meanwhile, rebuild the query on the next step.
+                    if self.requeue_changed(ident,job['book_id'],items,paragraphs):return
                     try:
-                        reply=PROVIDERS[cfg['provider']].generate(cfg,queries.system(query,cfg.get('_prompt_policy')),queries.prompt(query)+('\n前回の検証結果：'+feedback+'\n原文から正確に照合できる候補のみ返してください。修正案が不明な時はnullとし、変更のない箇所は除外してください。' if attempt else ''))
+                        reply=PROVIDERS[cfg['provider']].generate(cfg,system,prompt)
                     except (KeyError,TypeError,AttributeError) as exc:
                         self.unknown_usage(ident,cfg)
-                        diagnostics.record(self.database,ident,target_ids,query_type,attempt_number,'format','AIの応答形式が不正です。',exception_type=type(exc).__name__)
+                        diagnostics.record(self.database,ident,target_ids,query_type,attempt_number,'format','AIの応答形式が不正です。',exception_type=type(exc).__name__,context=request_context)
                         recorded_exception=True
                         if attempt<2:continue
                         raise ValueError('AIの応答形式が不正です（3回試行）。') from None
                     except ValueError as exc:
                         self.unknown_usage(ident,cfg)
                         message=str(exc) if type(exc) in {ValueError,ResponseFormatError} else 'AIの応答処理に失敗しました。'
-                        diagnostics.record(self.database,ident,target_ids,query_type,attempt_number,diagnostics.category(message),message,getattr(exc,'output',None),type(exc).__name__)
+                        diagnostics.record(self.database,ident,target_ids,query_type,attempt_number,diagnostics.category(message),message,getattr(exc,'output',None),type(exc).__name__,context=request_context)
                         recorded_exception=True
                         if '不正なJSON' in str(exc) and attempt<2:continue
                         raise
                     recorded_exception=False;last_output=reply.text
+                    request_context['response_received_at']=editing.timestamp()
                     cost=0 if cfg['provider']=='ollama' else (reply.input_tokens*cfg['input_price']+reply.output_tokens*cfg['output_price'])/1e6 if None not in (reply.input_tokens,reply.output_tokens,cfg['input_price'],cfg['output_price']) else None
                     with self.database() as con:
                         if con.execute('SELECT 1 FROM ai_jobs WHERE id=?',(ident,)).fetchone():con.execute('INSERT INTO ai_usage VALUES (?,?,?,?,?,?,?)',(str(uuid4()),ident,em.OWNER,reply.input_tokens,reply.output_tokens,cost,editing.timestamp()))
                     try:
+                        request_context['validation_units']=diagnostics.units(query,p)
                         accepted,issues=queries.assess(reply.text,p,query)
                         suggestions.extend(accepted)
                     except ValueError as exc:issues={pid:[str(exc)] for pid in [a['paragraph_id'] for a,_ in query['_members']]} if query.get('_batch') else [str(exc)]
                     if not issues:break
                     scoped=issues if isinstance(issues,dict) else {p['paragraph_id']:issues}
                     feedback=' / '.join(f'{pid}: {message}' for pid,messages in scoped.items() for message in messages)[:1800]
-                    diagnostics.record(self.database,ident,list(scoped),query_type,attempt_number,'format',feedback,last_output)
+                    diagnostics.record(self.database,ident,list(scoped),query_type,attempt_number,'format',feedback,last_output,context=request_context)
                     if attempt==2:
                         for pid,messages in scoped.items():unresolved.setdefault(pid,[]).extend(messages)
             suggestions,rejected_clusters=queries.short_findings(suggestions)
             if rejected_clusters:
-                diagnostics.record(self.database,ident,target_ids,query_type,attempt_number,'format','連続3文字以上の指摘は採用しません。',last_output)
+                if request_context is not None:request_context.update(phase='aggregate_candidate_validation',aggregate_request_ids=request_ids)
+                diagnostics.record(self.database,ident,target_ids,query_type,attempt_number,'format','連続3文字以上の指摘は採用しません。',last_output,context=request_context)
                 for member in paragraphs:unresolved.setdefault(member['paragraph_id'],[]).append('連続3文字以上の指摘は採用しません。')
             with self.database() as con:
                 con.execute('BEGIN IMMEDIATE')
                 row=con.execute('SELECT status FROM ai_jobs WHERE id=?',(ident,)).fetchone()
                 if not row or row[0]=='cancelled':return
                 now=editing.timestamp()
+                if not unchanged(con,job['book_id'],paragraphs):
+                    con.executemany("UPDATE ai_items SET status='pending',error=NULL WHERE job_id=? AND ordinal=?",[(ident,i['ordinal']) for i in items]);return
                 for item,p in zip(items,paragraphs):
                     if job['scope']=='paragraph' and not unresolved.get(p['paragraph_id']):
                         # Replace active flags only after a successful recheck.
@@ -215,12 +249,14 @@ class Worker:
                         if raw_cfg.get('skip_confirmed',True) and not reviews.allows_result(con,job['book_id'],p['paragraph_id'],d):continue
                         if key in seen:continue
                         seen.add(key)
-                        con.execute('INSERT OR IGNORE INTO ai_results VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)',(str(uuid4()),ident,job['book_id'],em.OWNER,job['engine_id'],cfg['model'],p['paragraph_id'],p['chapter_id'],json.dumps(d,ensure_ascii=False,sort_keys=True),p['source_hash'],'pending',now,now,None))
+                        result_id=str(uuid4())
+                        con.execute('INSERT OR IGNORE INTO ai_results VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)',(result_id,ident,job['book_id'],em.OWNER,job['engine_id'],cfg['model'],p['paragraph_id'],p['chapter_id'],json.dumps(d,ensure_ascii=False,sort_keys=True),p['source_hash'],'pending',now,now,None))
+                        if 'unit_version' in p:con.execute('INSERT OR IGNORE INTO ai_result_units VALUES (?,?,?,?,?)',(result_id,p['paragraph_id'],p['unit_version'],d['start'],d['end']))
                     issues=unresolved.get(p['paragraph_id'],[])
                     message=(FORMAT_ERROR_PREFIX+'（3回試行）。'+' / '.join(issues[:5]))[:1800] if issues else None
                     con.execute('UPDATE ai_items SET status=?,error=? WHERE job_id=? AND ordinal=?',('failed' if issues else 'done',message,ident,item['ordinal']))
-                latest=con.execute("SELECT error FROM ai_items WHERE job_id=? AND status='failed' ORDER BY ordinal DESC LIMIT 1",(ident,)).fetchone()
-                con.execute('UPDATE ai_jobs SET error=? WHERE id=?',(latest[0] if latest else None,ident))
+                latest_error=con.execute("SELECT error FROM ai_items WHERE job_id=? AND status='failed' ORDER BY ordinal DESC LIMIT 1",(ident,)).fetchone()
+                con.execute('UPDATE ai_jobs SET error=? WHERE id=?',(latest_error[0] if latest_error else None,ident))
                 con.execute('INSERT INTO ai_streaks(job_id,failures,stop_reason) VALUES (?,0,NULL) ON CONFLICT(job_id) DO UPDATE SET failures=0,stop_reason=NULL',(ident,))
                 # Invalid candidates need later review, but do not prevent scanning
                 # other paragraphs. Explicit pause and budget controls still apply.
@@ -229,7 +265,7 @@ class Worker:
         except Exception as exc:
             # Only curated messages; provider SDK/internal exceptions may contain authentication material.
             message=str(exc) if type(exc) in {ValueError,ResponseFormatError} else 'AIの応答処理で予期しないエラーが発生しました（'+type(exc).__name__+'）。エラー詳細を確認してください。'
-            if not recorded_exception:diagnostics.record(self.database,ident,target_ids,query_type,attempt_number,diagnostics.category(message),message,last_output,type(exc).__name__)
+            if not recorded_exception:diagnostics.record(self.database,ident,target_ids,query_type,attempt_number,diagnostics.category(message),message,last_output,type(exc).__name__,context=request_context)
             with self.database() as con:
                 row=con.execute('SELECT status FROM ai_jobs WHERE id=?',(ident,)).fetchone()
                 if not row or row[0]=='cancelled':return

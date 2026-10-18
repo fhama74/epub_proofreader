@@ -1,6 +1,6 @@
 import {test,expect} from '@playwright/test';
 import {newProject,menuAction,openActions} from './helpers';
-test('edit, undo, redo, ruby and validated EPUB download',async({page})=>{
+test('edit, persist, ruby and validated EPUB download',async({page})=>{
   await newProject(page);
   await expect(page.locator('iframe')).toBeVisible();
   await page.getByRole('button',{name:'次の段落・文'}).click();
@@ -10,9 +10,7 @@ test('edit, undo, redo, ruby and validated EPUB download',async({page})=>{
   await page.getByLabel('前の段落・文',{exact:true}).click();
   const frame=page.frameLocator('iframe');
   await expect(frame.locator('p.selected')).toContainText('天気');
-  await menuAction(page,'Undo');
-  await expect(frame.locator('p.selected')).toContainText('天汽');
-  await menuAction(page,'Redo');
+  await page.reload();
   await expect(frame.locator('p.selected')).toContainText('天気');
   await page.getByLabel('前の段落・文',{exact:true}).click();
   await frame.locator('ruby').first().click();
@@ -24,9 +22,9 @@ test('edit, undo, redo, ruby and validated EPUB download',async({page})=>{
   await page.getByRole('button',{name:'ルビ一覧を閉じる',exact:true}).click();
   await expect(frame.locator('ruby').first()).toContainText('我輩');
   await expect(frame.locator('ruby').first().locator('rp')).toHaveCount(2);
-  await menuAction(page,'履歴');
-  await expect(page.getByRole('dialog',{name:'校正履歴'})).toContainText('4件');
-  await page.getByRole('button',{name:'閉じる',exact:true}).click();
+  await openActions(page);
+  await expect(page.getByRole('button',{name:'Undo',exact:true})).toHaveCount(0);
+  await expect(page.getByRole('button',{name:'Redo',exact:true})).toHaveCount(0);
   await menuAction(page,'EPUB発行');
   await expect(page.getByRole('dialog',{name:'EPUB発行'})).toContainText('内部構造検証：成功',{timeout:20000});
   await page.getByRole('button',{name:'v1を発行して保存',exact:true}).click();
@@ -52,7 +50,7 @@ test('complex ruby is protected and search/replace preserves it',async({page})=>
   await expect(page.frameLocator('iframe').locator('body')).toContainText('天気');
 });
 
-test('sentence navigation and reversible paragraph split, merge and insertion',async({page})=>{
+test('sentence navigation and persistent paragraph split, merge and insertion',async({page})=>{
   await page.goto('/');
   await page.locator('input[accept=".epub,.pdf,.eproof"]').setInputFiles((await import('node:path')).resolve('../samples/navigation.epub'));
   await expect(page.locator('.proof-position')).toContainText('段落 1 / 3');
@@ -74,9 +72,7 @@ test('sentence navigation and reversible paragraph split, merge and insertion',a
   await page.getByLabel('挿入する本文',{exact:true}).fill('補完した本文。');
   await page.getByRole('button',{name:'段落を挿入して再計算',exact:true}).click();
   await expect(page.locator('.proof-position')).toContainText('/ 5');
-  await menuAction(page,'Undo');
-  await expect(page.locator('.proof-position')).toContainText('/ 3');
-  await menuAction(page,'Redo');
+  await page.reload();
   await expect(page.locator('.proof-position')).toContainText('/ 5');
 });
 

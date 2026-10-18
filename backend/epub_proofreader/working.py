@@ -61,4 +61,4 @@ def model(source):
  return result
 
 
-def materialize(source):return source.materialize() if isinstance(source,WorkingFiles) else source
+def materialize(source):return source.materialize() if hasattr(source,'materialize') else source

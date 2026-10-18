@@ -52,7 +52,7 @@ def test_engine_crud_default_switch_models(session,mock_ai):
 
 def test_ssrf_and_cloud_origins(session):
     c,create=session;create();e=engines(c)[0]
-    for url in ['http://169.254.169.254','http://100.64.1.5:11434/secret','http://user:pass@100.64.1.5:11434','http://100.64.1.5:11434?x=1']:
+    for url in ['http://169.254.169.254','http://localhost:11434/secret','http://user:pass@localhost:11434','http://localhost:11434?x=1']:
         assert c.post('/api/ai/engines',json={**e,'url':url}).status_code==422
     assert c.post('/api/ai/engines',json={**e,'provider':'openai'}).status_code==422
 

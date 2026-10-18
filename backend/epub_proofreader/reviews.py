@@ -9,12 +9,13 @@ def digest(value):
 
 
 def summary(meta, details, target='body'):
-    marks=meta.get('reviews',{}).get(details['id'],{}).get(target,{})
+    row=meta.get('reviews',{}).get(details['id'],{})
+    marks=row.get(target,{}) if not details.get('unit_version') or row.get('version')==details['unit_version'] else {}
     if target=='body':
         units=details['sentences'] if details['unit_mode']=='sentence' else [{'text':details['editor_text']}]
         units=units or [{'text':details['editor_text']}]
         whole=digest(details['editor_text'])
-        legacy=details['id'] not in meta.get('reviews',{}) and meta['statuses'].get(details['id'])=='human_checked'
+        legacy=not details.get('unit_version') and details['id'] not in meta.get('reviews',{}) and meta['statuses'].get(details['id'])=='human_checked'
         full=marks.get('all')==whole or legacy
         checked=[full or marks.get(str(i))==digest(u['text']) for i,u in enumerate(units)]
     else:
@@ -40,6 +41,8 @@ def both(meta,details):
 
 
 def mark(con,book_id,paragraph_id,target='body',index=None,expected_token=None,*,compact=False,draft_patch=None):
+    from . import unit_store
+    if unit_store.enabled(con,book_id):return unit_store.confirm(con,book_id,paragraph_id,target,index,expected_token,compact,draft_patch)
     value=editing.state(con,book_id)
     d=editing.paragraph_details(editing.working_model(value),paragraph_id,value['revision'],include_chapter_token=False)
     if expected_token is not None and expected_token!=d['token']:
@@ -86,10 +89,11 @@ def mark(con,book_id,paragraph_id,target='body',index=None,expected_token=None,*
 
 def query_needed(con,book_id,p,q,skip=True):
     if not skip:return q
-    try:d=editing.paragraph_details(editing.working_model(editing.state(con,book_id)),p['paragraph_id'],0,include_tokens=False)
+    from . import unit_store
+    try:d=unit_store.direct_details(con,book_id,p['paragraph_id']) if unit_store.enabled(con,book_id) else editing.paragraph_details(editing.working_model(editing.state(con,book_id)),p['paragraph_id'],0,include_tokens=False)
     except ValueError:return None
     # A queued snapshot no longer represents this paragraph. Do not send obsolete text.
-    if d['editor_text']!=p['text']:return None
+    if d['editor_text']!=p['text'] or p.get('unit_version')!=d.get('unit_version'):return None
     meta=projects.read(con,book_id);state=summary(meta,d,'body' if q['query_type']=='body' else 'ruby')
     if state['confirmed']:return None
     if q['query_type']=='ruby':
@@ -102,7 +106,8 @@ def query_needed(con,book_id,p,q,skip=True):
 
 
 def allows_result(con,book_id,pid,item):
-    try:d=editing.paragraph_details(editing.working_model(editing.state(con,book_id)),pid,0,include_tokens=False)
+    from . import unit_store
+    try:d=unit_store.direct_details(con,book_id,pid) if unit_store.enabled(con,book_id) else editing.paragraph_details(editing.working_model(editing.state(con,book_id)),pid,0,include_tokens=False)
     except ValueError:return False
     meta=projects.read(con,book_id);target='body' if item['target']=='text' else 'ruby';s=summary(meta,d,target)
     if s['confirmed']:return False

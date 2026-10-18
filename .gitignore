@@ -4,7 +4,7 @@ __pycache__/
 .data/
 data/
 secrets/
-node_modules/
+node_modules
 dist/
 .tools/
 test-results/

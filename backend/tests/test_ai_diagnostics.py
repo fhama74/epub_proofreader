@@ -111,3 +111,58 @@ def test_paragraph_start_resets_only_target_and_quote_does_not_change_review(ses
     assert c.get(root+'/history').json()==before
     finish(r.json()['job_id'])
     assert [q['query_type'] for q in mock_ai]==['body','ruby']
+
+
+def test_context_separates_sent_validation_and_edited_live_text(session,monkeypatch):
+    from test_editing import details,edit,P1
+    c,create=session;root=create(source(1));original=details(c,root,P1)['editor_text']
+    ident=job(c,root,paragraph_id=P1)
+    calls=[]
+    def generate(cfg,system,prompt):
+        calls.append(prompt)
+        if len(calls)==1:
+            r=edit(c,root,P1,original+'新しい追記。');assert r.status_code==200,r.text
+        return Reply('{"findings":[{"i":0,"o":"新","r":null}]}',10,5)
+    monkeypatch.setattr(PROVIDERS['ollama'],'generate',generate)
+    finish(ident)
+    entries=errors(c,root,ident)['entries'];assert len(entries)==3
+    records=[c.get(root+f'/ai/jobs/{ident}/errors/'+e['id']).json() for e in entries]
+    contexts={e['attempt']:r['context'] for e,r in zip(entries,records)}
+    first=contexts[1]
+    assert first['request']['prompt']==calls[0]
+    assert first['sent_units'][0]['text']==original
+    assert first['validation_units']==first['sent_units'] and first['unit_mapping_unchanged'] is True
+    assert first['current_before_send']['paragraphs'][0]['text']==original
+    assert first['current_at_error']['paragraphs'][0]['text']==original+'新しい追記。'
+    assert first['findings_comparison'][0]['original_in_assigned_unit'] is False
+    assert first['findings_comparison'][0]['assigned_unit']['text']==original
+    assert contexts[2]['current_before_send']['paragraphs'][0]['text']==original+'新しい追記。'
+    assert len({ctx['request_id'] for ctx in contexts.values()})==3
+    assert '前回の検証結果' in contexts[2]['request']['prompt']
+    assert 'current_at_error' not in c.get(root+'/ai').text
+
+
+def test_context_shows_other_sent_unit_containing_the_reported_character(session,monkeypatch):
+    c,create=session;root=create(source(2));ident=job(c,root,'chapter',batch_paragraphs=4)
+    def generate(cfg,system,prompt):
+        # Credentials/config unrelated to the text must never enter diagnostics.
+        cfg['api_key']='private-test-credential'
+        return Reply('{"findings":[{"i":0,"o":"1","r":null}]}',1,1)
+    monkeypatch.setattr(PROVIDERS['ollama'],'generate',generate)
+    finish(ident)
+    entry=errors(c,root,ident)['entries'][0]
+    response=c.get(root+f'/ai/jobs/{ident}/errors/'+entry['id'])
+    ctx=response.json()['context'];check=ctx['findings_comparison'][0]
+    assert check['original_in_assigned_unit'] is False and check['other_matching_units']==[1]
+    assert [u['i'] for u in ctx['sent_units']]==[0,1]
+    assert ctx['unit_mapping_unchanged'] is True
+    assert 'private-test-credential' not in response.text
+    assert 'api_key' not in response.text
+
+
+def test_legacy_errors_have_no_context_and_access_checks_still_apply(session):
+    from epub_proofreader.ai import diagnostics
+    c,create=session;root=create();ident=job(c,root)
+    diagnostics.record(module.database,ident,['chapter0001-p00002'],'body',1,'format','旧記録','old output')
+    entry=errors(c,root,ident)['entries'][0]
+    assert c.get(root+f'/ai/jobs/{ident}/errors/'+entry['id']).json()=={'output':'old output','context':None}

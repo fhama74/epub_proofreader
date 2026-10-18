@@ -47,9 +47,11 @@ docker compose ps
 
 ## 保存・停止・更新
 
-- `./data/library.sqlite3`：本・PDF・編集・発行版・AI情報。
+- `./data/epub-proofreader-units.sqlite3`：本・PDF・本文単位・発行版・AI情報。旧 `library.sqlite3` があれば初回起動時に移行し、旧ファイルは復旧用として保持します。
 - `./secrets/ai_secret_key`：APIキー保存用の暗号化キー。データとは別に保存。
 - `.env`：接続・ポート設定。APIキーは記入しません。
+
+新しいDB管理方式への初回移行では、現在の編集済み本文・PDF・発行版を引き継ぎ、校閲状態とAI候補は再検査が必要な状態にします。更新前にコンテナを停止し、data/全体とsecrets/ai_secret_keyをバックアップしてください。旧library.sqlite3は変更せず保持します。旧版へ戻す場合は、新旧DBを混在させず、別の保存先へ更新前バックアップを復元してください。
 
 ```sh
 docker compose logs --tail 100 -f

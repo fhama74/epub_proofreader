@@ -58,3 +58,14 @@ button.primary,.download-button{background:#d8e5b7;color:#233a2d;border:1px soli
 
 /* Structural actions share the proofreading selection and update controls. */
 .inline-update{justify-content:flex-start}.chapter-paragraph-actions{margin-top:14px;padding-top:12px;border-top:1px solid #dce3d1}.chapter-paragraph-actions h3{margin:0 0 8px;font-size:13px}.block-action-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}.block-action-grid button{font-size:11px;white-space:normal;min-height:38px}.chapter-paragraph-actions>small{display:block;margin:8px 0;color:#748569;font-size:11px;line-height:1.7}.reader-mode .block-action-grid button{font-size:14px;min-height:44px}
+
+.proof-score{display:inline-flex;align-items:center;gap:.6em;flex-wrap:wrap;font-size:.85rem;color:var(--ink,#243b30)}
+.proof-score strong{font-variant-numeric:tabular-nums;color:#365c42}
+.proof-score small{color:#66775f}
+footer .proof-score{margin-left:auto}
+.library-item .proof-score{margin:.35rem 0 .65rem}
+.cleanup-result{padding:.65rem;background:#eaf1df;border-radius:6px;overflow-wrap:anywhere}
+@media(max-width:640px){footer{flex-wrap:wrap;gap:.3rem}footer .proof-score{margin-left:0;gap:.5em;font-size:.75rem}}
+
+.app footer,.app.reader-mode footer,.app.reader-mode:not(.reader-editing) footer{height:auto;min-height:26px;flex-wrap:wrap}
+.app footer>.proof-score{overflow:visible;white-space:normal}

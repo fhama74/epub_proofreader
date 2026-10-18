@@ -65,6 +65,10 @@ def reference(base: str, href: str):
 
 class Book:
     def __init__(self, data: bytes, *, repair_import=False):
+        from .unit_store import Source
+        if isinstance(data,Source):
+            self.__dict__.update(data.model().__dict__)
+            return
         from .working import WorkingFiles
         if isinstance(data,WorkingFiles):
             self.__dict__.update(data.model().__dict__)

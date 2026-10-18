@@ -26,8 +26,8 @@ test('inline body editing and separate ruby window preserve drafts across naviga
   await expect(page.getByLabel(/^親文字 /).first()).toBeEnabled();
   await page.getByRole('button',{name:'ルビ一覧を閉じる',exact:true}).click();
   await expect(page.getByLabel('現在の本文',{exact:true})).toHaveText('我輩は猫である。名まえはまだない。');
-  await menuAction(page,'Undo');
-  await expect(page.getByLabel('現在の本文',{exact:true})).toHaveText('吾輩は猫である。名まえはまだない。');
+  await page.reload();
+  await expect(page.getByLabel('現在の本文',{exact:true})).toHaveText('我輩は猫である。名まえはまだない。');
   await page.getByText('プロジェクト情報',{exact:true}).click();
   await openActions(page);await expect(page.getByRole('button',{name:'作業データを書き出す',exact:true})).toBeVisible();
 });

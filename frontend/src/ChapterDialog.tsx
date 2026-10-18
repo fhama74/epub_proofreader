@@ -20,7 +20,7 @@ export default function ChapterDialog({book,paragraph,onUpdate,onClose,run,posit
   <label className="edit-label">章のレベル<select aria-label="章のレベル" value={level} disabled={busy} onChange={e=>setLevel(Number(e.target.value))}>{[1,2,3,4,5,6].map(n=><option key={n} value={n}>{`h${n} · 第${n}レベル${n===1?'（最上位）':''}`}</option>)}</select></label>
   <p className="editor-help">例：「第一部」はh1、その中の「一・二・三」はh2。目次も選んだレベルに合わせて階層化します。先行する上位の項目がなければ、目次の最上位に置きます。本文内に別途作られた目次ページは更新しません。</p>
   <p className="dialog-meta">追加位置の基準となる{sentenceIndex===undefined?'段落':'文'}</p><pre>{(sentenceIndex===undefined?paragraph.text:paragraph.sentences[sentenceIndex]?.text) || '（空の段落）'}</pre>
-  <p className="editor-help">本文・ルビ・校閲状態・PDFとの対応を引き継ぎます。保存後はUndoで元に戻せます。未更新の入力は先に更新してください。</p>
+  <p className="editor-help">本文・ルビ・PDFとの対応を保持します。変更した段落の校閲状態は再確認が必要です。見出しは同じXHTML内に追加し、ファイルは増やしません。未更新の入力は先に更新してください。</p>
   {error && <p role="alert" className="dialog-error">{error}</p>}
   <div className="dialog-actions"><button disabled={busy} onClick={close}>キャンセル</button><button className="primary" disabled={busy || !title.trim()} onClick={()=>void create()}>{busy?'章と目次を更新中…':'章を作成'}</button></div>
  </section></div>;

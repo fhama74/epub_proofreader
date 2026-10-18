@@ -25,7 +25,7 @@ for(const action of ['更新','確認済みにする']){
  test(`desktop ${action} advances exactly one unit even with a later AI finding`,async({page})=>{
   await page.route(/\/api\/books\/[^/]+\/ai(?:\/events)?$/,route=>{
    const id=new URL(route.request().url()).pathname.split('/')[3];
-   const candidate={id:'later',book_id:id,chapter_id:'chapter0001',paragraph_id:'chapter0001-p00003',target:'text',start:0,end:1,original:'静',replacement:null,status:'pending',stale:false,reason:'test'};
+   const candidate={id:'later',book_id:id,chapter_id:'section-chapter0001-h00001',paragraph_id:'chapter0001-p00003',target:'text',start:0,end:1,original:'静',replacement:null,status:'pending',stale:false,reason:'test'};
    const data={jobs:[],results:[candidate]};
    return route.request().url().endsWith('/events')?route.fulfill({contentType:'text/event-stream',body:`data: ${JSON.stringify(data)}\n\n`}):route.fulfill({json:data});
   });

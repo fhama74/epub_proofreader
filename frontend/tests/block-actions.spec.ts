@@ -2,7 +2,7 @@ import {test,expect} from '@playwright/test';
 import {newProject,menuAction} from './helpers';
 
 for(const kind of ['章','段落'])for(const position of ['前','後']){
- test(`insert ${kind} ${position} of the displayed sentence in one reversible operation`,async({page})=>{
+ test(`insert ${kind} ${position} of the displayed sentence as one saved operation`,async({page})=>{
   await newProject(page,'navigation.epub');
   await page.getByLabel('次の段落・文',{exact:true}).click();await page.getByLabel('次の段落・文',{exact:true}).click();
   await expect(page.locator('.proof-position')).toContainText('文 2 / 40');
@@ -24,8 +24,8 @@ for(const kind of ['章','段落'])for(const position of ['前','後']){
   if(kind==='章'){expect(book.chapters).toHaveLength(3);expect(book.chapters[1].heading_level).toBe(2);}
   else{expect(book.chapters[0].paragraph_count).toBe(5);await expect(page.getByLabel('本文を編集',{exact:true})).toHaveValue('追加した本文。');}
   await expect(page.getByRole('dialog')).toHaveCount(0);
-  await menuAction(page,'Undo');await expect(page.getByLabel('章の選択',{exact:true}).locator('option')).toHaveCount(2);
-  await expect(page.locator('.proof-position')).toContainText('/ 3');
+  await page.reload();await expect(page.getByLabel('章の選択',{exact:true}).locator('option')).toHaveCount(kind==='章'?3:2);
+  if(kind==='段落')await expect(page.locator('.proof-position')).toContainText('/ 5');
  });
 }
 

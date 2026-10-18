@@ -5,7 +5,7 @@ from urllib.parse import quote
 from fastapi import UploadFile,HTTPException
 from fastapi.responses import Response
 from pydantic import BaseModel,Field
-from . import projects,editing,library
+from . import projects,editing,library,unit_store,unit_archive,proof_score,maintenance
 from .epub import EpubError
 from .validation import epubcheck
 from .ai import backup as ai_backup
@@ -40,7 +40,7 @@ class DeleteRequest(BaseModel):
 def install(app,database,load_book,snapshot,current_state):
     def response(con,book_id):
         value=projects.read(con,book_id)
-        return {**value,'catalog':library.info(con,book_id),'progress':projects.progress(editing.working_model(editing.state(con,book_id)),value)}
+        return {**value,'proof_score':proof_score.read(con,book_id),'catalog':library.info(con,book_id),'progress':projects.progress(editing.working_model(editing.state(con,book_id)),value)}
 
     @app.get('/api/projects')
     def list_projects():
@@ -50,8 +50,20 @@ def install(app,database,load_book,snapshot,current_state):
                 catalog=library.info(con,row[0]);published_bytes=con.execute('SELECT COALESCE(SUM(length(epub)+length(CAST(validation AS BLOB))),0) FROM publications WHERE book_id=?',(row[0],)).fetchone()[0]
                 ai_bytes=con.execute("SELECT COALESCE((SELECT SUM(length(CAST(payload AS BLOB))) FROM ai_items WHERE job_id IN (SELECT id FROM ai_jobs WHERE book_id=?)),0)+COALESCE((SELECT SUM(length(CAST(data AS BLOB))) FROM ai_results WHERE book_id=?),0)",(row[0],row[0])).fetchone()[0]
                 items.append({'id':row[0],**catalog,'revision':row[4],'edit_count':row[5],'pdf_attached':row[6]>0,'size':row[7]+published_bytes+ai_bytes})
+                if unit_store.enabled(con,row[0]):
+                    items[-1]['proof_score']=proof_score.read(con,row[0])
+                    revision,edits=con.execute('SELECT revision,edits FROM unit_books WHERE book_id=?',(row[0],)).fetchone()
+                    size=con.execute('SELECT COALESCE(SUM(length(xml)+COALESCE(length(record),0)),0) FROM unit_nodes WHERE book_id=?',(row[0],)).fetchone()[0]
+                    items[-1].update(revision=revision,edit_count=edits,size=items[-1]['size']+size)
             location=Path(con.execute('PRAGMA database_list').fetchone()[2])
             return {'projects':items,'storage':{'path':str(location.parent),'database':str(location),'used_bytes':sum(item['size'] for item in items),'database_bytes':location.stat().st_size if location.exists() else 0,'project_count':len(items)}}
+
+    @app.post('/api/storage/compact')
+    def compact_database():
+        with maintenance.exclusive():
+            with database() as con:
+                try:return maintenance.compact(con)
+                except ValueError as exc:raise EpubError(str(exc)) from None
 
     @app.post('/api/books/{book_id}/delete')
     def delete_project(book_id:str,request:DeleteRequest):
@@ -124,10 +136,21 @@ def install(app,database,load_book,snapshot,current_state):
                 if patch is None:continue
                 if key in {'statuses','mappings'} and not set(patch)<=pids:raise EpubError('この書籍にない段落が指定されています。')
                 for ident,value in patch.items():
+                    if key=='statuses' and unit_store.enabled(con,book_id):
+                        unit_store.lock(con,book_id,ident,unit_store.edit_owner.get())
+                        if value=='human_checked':
+                            projects.write(con,book_id,meta)
+                            unit_store.confirm(con,book_id,ident)
+                            meta=projects.read(con,book_id)
+                        else:
+                            meta.setdefault('reviews',{}).setdefault(ident,{}).pop('body',None)
+                            con.execute("DELETE FROM unit_reviews WHERE book_id=? AND unit_id=? AND target='body'",(book_id,ident))
                     if value is None:meta[key].pop(ident,None)
                     else:meta[key][ident]=value
             meta['version']+=1
             meta=projects.validate_metadata(meta,book,projects.pdf_data(con,book_id));projects.write(con,book_id,meta)
+            if request.statuses and unit_store.enabled(con,book_id):
+                for pid in request.statuses:proof_score.refresh_unit(con,book_id,pid,unit_store.direct_details(con,book_id,pid),meta)
             return response(con,book_id)
 
     @app.post('/api/books/{book_id}/pdf')
@@ -168,13 +191,28 @@ def install(app,database,load_book,snapshot,current_state):
         data=await bounded(file,projects.MAX_PROJECT)
         original,value,meta,pdf,name=projects.decode_project(data);book_id=str(uuid.uuid4())
         with database() as con:
-            con.execute('BEGIN IMMEDIATE');library.create(con,book_id,name,original,base=meta.pop('catalog',{}).get('published_version',library.embedded_version(original)));editing.save_state(con,book_id,value);projects.write(con,book_id,meta)
+            con.execute('BEGIN IMMEDIATE')
+            version=meta.pop('catalog',{}).get('published_version',library.embedded_version(original))
+            if unit_store.USE_NEW_STORAGE:
+                normalized=isinstance(value['working'],unit_store.Source)
+                if not normalized:
+                    from .epub import Book
+                    original=Book(editing.materialize(value['working'])).apply_ids(value.get('ids',{}))
+                    meta['reviews']={};meta['statuses']={};meta['version']+=1
+                    value.pop('_ai_backup',None)
+                library.create(con,book_id,name,original,base=version);projects.write(con,book_id,meta)
+                if normalized:unit_archive.restore(con,book_id,value)
+            else:
+                library.create(con,book_id,name,original,base=version);editing.save_state(con,book_id,value);projects.write(con,book_id,meta)
             con.execute('UPDATE projects SET pdf=? WHERE book_id=?',(pdf,book_id))
             if '_ai_backup' in value:ai_backup.restore(con,book_id,value['_ai_backup'],value)
         return snapshot(book_id)
 
     @app.post('/api/books/{book_id}/history/import')
     async def import_history(book_id:str,file:UploadFile):
+        if unit_store.USE_NEW_STORAGE:
+            await file.close()
+            raise HTTPException(410,'操作履歴の読み込みは廃止しました。作業データ（.eproof）を読み込んでください。')
         original=load_book(book_id);data=await bounded(file,64*1024*1024)
         try:
             payload=json.loads(data)

@@ -24,13 +24,17 @@ def validate_metadata(meta,book,pdf=None):
     result=fresh()
     if type(meta.get('version')) is not int or meta['version']<0:raise EpubError('プロジェクトの版番号が不正です。')
     result['version']=meta['version']
+    if type(meta.get('ai_proofread_complete',False)) is not bool:raise EpubError('AI検査の完了状態が不正です。')
+    if meta.get('ai_proofread_complete'):result['ai_proofread_complete']=True
     for key in ('statuses','mappings','drafts','view','reviews'):
         if not isinstance(meta.get(key,{}),dict):raise EpubError(f'{key}の形式が不正です。')
         result[key]=copy.deepcopy(meta.get(key,{}))
     if len(json.dumps(result,ensure_ascii=False))>4*1024*1024:raise EpubError('プロジェクト設定・未保存入力が大きすぎます。')
     for pid,targets in result['reviews'].items():
-        if not isinstance(pid,str) or len(pid)>128 or not isinstance(targets,dict) or set(targets)-{'body','ruby'}:raise EpubError('校閲状態が不正です。')
-        for marks in targets.values():
+        if not isinstance(pid,str) or len(pid)>128 or not isinstance(targets,dict) or set(targets)-{'body','ruby','version'}:raise EpubError('校閲状態が不正です。')
+        if 'version' in targets and (type(targets['version']) is not int or targets['version']<1):raise EpubError('校閲の版番号が不正です。')
+        for target,marks in targets.items():
+            if target=='version':continue
             if not isinstance(marks,dict) or len(marks)>20000 or any(not isinstance(k,str) or len(k)>20 or not isinstance(v,str) or len(v)!=64 or any(c not in '0123456789abcdef' for c in v) for k,v in marks.items()):raise EpubError('校閲状態が不正です。')
     for pid,status in result['statuses'].items():
         if not isinstance(pid,str) or len(pid)>128 or not isinstance(status,str) or status not in STATUSES:raise EpubError('確認状態が不正です。')
@@ -239,7 +243,9 @@ def history_export(original,value):
     return {'schema_version':2,'original_sha256':original.fingerprint,'working_sha256':hashlib.sha256(editing.materialize(value['working'])).hexdigest(),'working_content_sha256':content_hash(editing.working_model(value)),'revision':value['revision'],'events':value['history'],'state':{k:value[k] for k in ('commands','cursor','history','revision','ids')}}
 
 def encode_project(original,value,meta,pdf,name,ai=None):
-    files={'original.epub':original.original,'working.epub':editing.materialize(value['working']),'editing.json':json.dumps({k:value[k] for k in ('commands','cursor','history','revision','ids')},ensure_ascii=False).encode(),'project.json':json.dumps(meta,ensure_ascii=False).encode()}
+    from . import unit_store,unit_archive
+    saved=unit_archive.encode(value) if isinstance(value['working'],unit_store.Source) else {k:value[k] for k in ('commands','cursor','history','revision','ids')}
+    files={'original.epub':original.original,'working.epub':editing.materialize(value['working']),'editing.json':json.dumps(saved,ensure_ascii=False).encode(),'project.json':json.dumps(meta,ensure_ascii=False).encode()}
     if pdf is not None:files['source.pdf']=pdf
     if ai is not None:files['ai.json']=json.dumps(ai,ensure_ascii=False).encode()
     manifest={'format':'epub-proofreader','schema_version':SCHEMA,'name':name,'files':{path:hashlib.sha256(data).hexdigest() for path,data in files.items()}}
@@ -260,9 +266,11 @@ def decode_project(data):
             files={name:archive.read(name) for name in names};manifest=json.loads(files.pop('manifest.json'))
         if manifest.get('format')!='epub-proofreader' or manifest.get('schema_version')!=SCHEMA:raise EpubError('未対応の.eproof形式です。')
         if manifest.get('files')!={path:hashlib.sha256(value).hexdigest() for path,value in files.items()}:raise EpubError('プロジェクトのファイルハッシュが一致しません。')
-        original=Book(files['original.epub'],repair_import=True);value=replay(original,json.loads(files['editing.json']))
+        from . import unit_archive
+        original=Book(files['original.epub'],repair_import=True);saved=json.loads(files['editing.json'])
+        value=unit_archive.decode(original.normalized,saved) if saved.get('storage_mode')=='units' else replay(original,saved)
         if Book(value['working']).files!=Book(files['working.epub']).files:raise EpubError('作業用EPUBと履歴の再現結果が一致しません。')
-        value['working']=files['working.epub']
+        if saved.get('storage_mode')!='units':value['working']=files['working.epub']
         meta=validate_metadata(json.loads(files['project.json']),editing.working_model(value),files.get('source.pdf'))
         if 'ai.json' in files:
             if len(files['ai.json'])>64*1024*1024:raise EpubError('AI校正バックアップが大きすぎます。')
