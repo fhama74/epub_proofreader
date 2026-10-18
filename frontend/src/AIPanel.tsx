@@ -1,5 +1,6 @@
+import {reviewedState,type ReviewReceipt} from './reviewReceipt';
 import {createRequestId} from './requestId';
-import {useCallback,useEffect,useMemo,useState} from 'react';
+import {useCallback,useEffect,useMemo,useRef,useState} from 'react';
 import type {Book} from './types';
 import type {Candidate,Engine,AIState} from './aiTypes';
 import {statusNames,categories,navigationCandidates,neighboringCandidate} from './aiTypes';
@@ -7,18 +8,21 @@ import {api} from './dialogUtils';
 import EngineDialog from './EngineDialog';
 import PromptDialog from './PromptDialog';
 export interface AINavigation {previousId:string|null;nextId:string|null;count:number;index:number;activity?:string}
-export default function AIPanel({book,paragraphId,chapterId,onJump,onUpdate,run,onModal,onEditCandidate,onNavigation,onSelected,navRequest,onResults,selectionToken}:{book:Book;paragraphId?:string;chapterId?:string;onJump:(c:Candidate)=>void;onUpdate:(b:Book)=>void;run:<T>(fn:()=>Promise<T>)=>Promise<T>;onModal:(open:boolean)=>void;onEditCandidate:(c:Candidate)=>void;onNavigation:(n:AINavigation)=>void;onSelected:(c:Candidate|null)=>void;navRequest:{id:string;nonce:number}|null;onResults:(results:Candidate[])=>void;selectionToken:number}){
+export default function AIPanel({reviewEvent,book,paragraphId,chapterId,onJump,onUpdate,run,onModal,onEditCandidate,onNavigation,onSelected,navRequest,onResults,selectionToken}:{reviewEvent:ReviewReceipt|null;book:Book;paragraphId?:string;chapterId?:string;onJump:(c:Candidate)=>void;onUpdate:(b:Book)=>void;run:<T>(fn:()=>Promise<T>)=>Promise<T>;onModal:(open:boolean)=>void;onEditCandidate:(c:Candidate)=>void;onNavigation:(n:AINavigation)=>void;onSelected:(c:Candidate|null)=>void;navRequest:{id:string;nonce:number;candidate?:Candidate}|null;onResults:(results:Candidate[])=>void;selectionToken:number}){
   const [engines,setEngines]=useState<Engine[]>([]);const [engine,setEngine]=useState('');const [scope,setScope]=useState('paragraph');const [budget,setBudget]=useState('');const [state,setState]=useState<AIState>({jobs:[],results:[]});const [manage,setManage]=useState(false);const [table,setTable]=useState(false);const [statusFilter,setStatusFilter]=useState('');const [category,setCategory]=useState('');const [engineFilter,setEngineFilter]=useState('');const [chapterFilter,setChapterFilter]=useState('');const [selected,setSelected]=useState<string|null>(null);const [error,setError]=useState('');const [busy,setBusy]=useState(false);const [connected,setConnected]=useState(false);const [now,setNow]=useState(Date.now());
   const [promptOpen,setPromptOpen]=useState(false);
   const [skipConfirmed,setSkipConfirmed]=useState(true);
   const [resumeBudget,setResumeBudget]=useState('');
   useEffect(()=>{onModal(manage || table || promptOpen);return()=>onModal(false);},[manage,table,promptOpen,onModal]);
+  const confirmed=useRef({bookId:book.id,revision:book.edit_state.revision,ids:new Set<string>()});
+  if(confirmed.current.bookId!==book.id || confirmed.current.revision!==book.edit_state.revision)confirmed.current={bookId:book.id,revision:book.edit_state.revision,ids:new Set()};
+  useEffect(()=>{if(reviewEvent?.book_id!==book.id || reviewEvent.revision!==book.edit_state.revision)return;for(const id of reviewEvent.reviewed_ids)confirmed.current.ids.add(id);setState(old=>reviewedState(old,confirmed.current.ids));},[reviewEvent,book.id,book.edit_state.revision]);
   const reload=useCallback(async()=>{const r=await api<{engines:Engine[]}>('/api/ai/engines');setEngines(r.engines);setEngine(old=>r.engines.some(e=>e.id===old)?old:(r.engines.find(e=>e.is_default)||r.engines[0])?.id || '');},[]);
   useEffect(()=>{void reload().catch(e=>setError(String(e)));},[reload]);
   useEffect(()=>{
     setState({jobs:[],results:[]});setSelected(null);
-    const source=new EventSource(`/api/books/${book.id}/ai/events`);source.onmessage=e=>{setState(JSON.parse(e.data));setConnected(true);};source.onerror=()=>setConnected(false);
-    void api<AIState>(`/api/books/${book.id}/ai`).then(setState).catch(e=>setError(String(e)));
+    const source=new EventSource(`/api/books/${book.id}/ai/events`);source.onmessage=e=>{try{setState(reviewedState(JSON.parse(e.data),confirmed.current.ids));setConnected(true);}catch{setConnected(false);}} ;source.onerror=()=>setConnected(false);
+    void api<AIState>(`/api/books/${book.id}/ai`).then(value=>setState(reviewedState(value,confirmed.current.ids))).catch(e=>setError(String(e)));
     return()=>source.close();
   },[book.id]);
   useEffect(()=>{const timer=setInterval(()=>setNow(Date.now()),1000);return()=>clearInterval(timer);},[]);
@@ -30,7 +34,7 @@ export default function AIPanel({book,paragraphId,chapterId,onJump,onUpdate,run,
   useEffect(()=>{setSelected(null);},[selectionToken]);
   useEffect(()=>{onResults(ordered);},[ordered,onResults]);
   useEffect(()=>{onSelected(chosen || null);},[chosen,onSelected]);
-  useEffect(()=>{if(!navRequest)return;let active=true;
+  useEffect(()=>{if(!navRequest)return;if(navRequest.candidate && !confirmed.current.ids.has(navRequest.candidate.id)){jump(navRequest.candidate);return;}let active=true;
     void api<AIState>(`/api/books/${book.id}/ai`).then(value=>{if(!active)return;setState(value);const c=value.results.find(c=>c.id===navRequest.id && ['pending','held','undone'].includes(c.status) && c.target==='text');if(c)jump(c);}).catch(e=>{if(active)setError(String(e));});
     return()=>{active=false;};
   },[navRequest?.nonce,book.id]);

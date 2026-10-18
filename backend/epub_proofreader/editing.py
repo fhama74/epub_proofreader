@@ -67,14 +67,14 @@ def ruby_limits(item):
     range_editable=simple_ruby(node) and layout(node)[0]==(target.text or '')
     return {'range_min':start-len(left),'range_max':end+len(right),'range_editable':range_editable}
 
-def paragraph_details(book, paragraph_id, revision, *, include_tokens=True):
+def paragraph_details(book, paragraph_id, revision, *, include_tokens=True,include_chapter_token=True):
     chapter, record, _, pieces, text = text_layout(book, paragraph_id)
     _,_,ruby_ranges=layout(locate_paragraph(book,paragraph_id)[2])
     rubies=[{**ruby,'index':index,'start':ruby_ranges[index][1],'end':ruby_ranges[index][2],**ruby_limits(ruby_ranges[index])} for index,ruby in enumerate(record['rubies'])]
     tokens={}
     if include_tokens:
         tokens['token']=hashlib.sha256(etree.tostring(locate_paragraph(book,paragraph_id)[2],method='c14n',with_comments=True)).hexdigest()
-        tokens['chapter_token']=hashlib.sha256(etree.tostring(book.trees[chapter['path']],method='c14n',with_comments=True)+json.dumps([p['id'] for p in chapter['paragraphs']]).encode()).hexdigest()
+        if include_chapter_token:tokens['chapter_token']=hashlib.sha256(etree.tostring(book.trees[chapter['path']],method='c14n',with_comments=True)+json.dumps([p['id'] for p in chapter['paragraphs']]).encode()).hexdigest()
     return {**record, **tokens,'rubies':rubies, 'path': chapter['path'], 'revision': revision, 'editor_text': text, 'protected_ranges': [{'start': p['start'], 'end': p['end']} for p in pieces if p['protected']]}
 
 def text_changes(book, paragraph_id, after, span=None):
@@ -197,10 +197,15 @@ def repack(data, replacements=None):
         out.writestr(mimetype, b'application/epub+zip')
         for info in source.infolist():
             if info.filename != 'mimetype':
+                if info.filename in replacements and replacements[info.filename] is None:continue
                 info = copy.copy(info)
                 if info.compress_type not in {zipfile.ZIP_STORED,zipfile.ZIP_DEFLATED}:
                     info.compress_type = zipfile.ZIP_DEFLATED
                 out.writestr(info, replacements.get(info.filename, source.read(info)))
+        for path,content in replacements.items():
+            if path not in source.namelist() and content is not None:
+                from .epub import safe_name
+                out.writestr(safe_name(path),content,compress_type=zipfile.ZIP_DEFLATED)
     return buffer.getvalue()
 
 def structure(tree):
@@ -209,6 +214,8 @@ def structure(tree):
 def validate_export(original, working, commands=()):
     result = repack(working.original)
     checked = Book(result)
+    if any(c.get('action')=='chapter_split' for c in commands):
+        return validate_chapter_export(original,checked,result,commands)
     if set(original.files) != set(checked.files):
         raise EpubError('出力検証: EPUB内のファイル一覧が変化しています。')
     from .structure import decoded
@@ -227,6 +234,27 @@ def validate_export(original, working, commands=()):
         if getattr(original,key) != getattr(checked,key):
             raise EpubError(f'出力検証: {key}が変更されています。')
     return result, {'status':'passed', 'changed_xhtml':changed, 'file_count':len(checked.files), 'structure_preserved':True}
+
+def validate_chapter_export(original,checked,result,commands):
+    from .structure import decoded
+    expected_files=dict(original.files)
+    for command in commands:
+        snapshot=command.get('snapshot',{})
+        if command.get('action')=='chapter_split':
+            for path,data in snapshot['after_files'].items():expected_files[path]=decoded(data)
+        elif 'file' in snapshot:expected_files[snapshot['file']]=decoded(snapshot['after_file'])
+    expected=Book(repack(original.original,expected_files))
+    if set(expected.files)!=set(checked.files):raise EpubError('出力検証: 章作成の履歴とファイル一覧が一致しません。')
+    changed=[]
+    for path,data in checked.files.items():
+        if path in expected.trees:
+            a,b=expected.trees[path],checked.trees[path]
+            if structure(a)!=structure(b):raise EpubError('出力検証: 許可されていない構造変更があります: '+path)
+        elif data!=expected.files[path]:raise EpubError('出力検証: 章作成の履歴と変更内容が一致しません: '+path)
+        if original.files.get(path)!=data:changed.append(path)
+    for key in ['manifest','spine','metadata','direction','toc']:
+        if getattr(expected,key)!=getattr(checked,key):raise EpubError('出力検証: 章作成の履歴と'+key+'が一致しません。')
+    return result,{'status':'passed','changed_xhtml':[p for p in changed if p in checked.trees],'file_count':len(checked.files),'structure_preserved':True,'chapters_updated':True}
 
 @lru_cache(maxsize=2)
 def initial_working(data):return Book(data,repair_import=True).normalized
@@ -283,7 +311,12 @@ def commit_edit(con, book_id, revision, kind, paragraph_id=None, text=None, ruby
             raise EpubError('元に戻す・やり直す操作がありません。')
         command = value['commands'][index]
         if not command.get('undoable',True):raise EditConflict('ルビの追加・削除はUndo／Redoの対象外です。その操作より前には戻せません。')
-        if 'snapshot' in command:
+        if command['action']=='chapter_split':
+            from .chapters import apply_snapshot
+            value['working']=apply_snapshot(book,command['snapshot'],reverse)
+            value['ids']=copy.deepcopy(command['snapshot']['ids_before' if reverse else 'ids_after'])
+            value['focus_id']=command['paragraph_ids'][0]
+        elif 'snapshot' in command:
             from .structure import decoded
             snapshot=command['snapshot']
             expected=decoded(snapshot['after_file'] if reverse else snapshot['before_file'])
@@ -300,7 +333,12 @@ def commit_edit(con, book_id, revision, kind, paragraph_id=None, text=None, ruby
     else:
         snapshot=None
         ruby_options=None
-        if kind in {'ruby_add','ruby_delete'}:
+        chapter_options=None
+        if kind=='chapter_split':
+            from .chapters import split as chapter_split
+            value['working'],snapshot,paragraphs,before,after,focus,chapter_options=chapter_split(book,paragraph_id,text or '')
+            value['ids']=snapshot['ids_after'];value['focus_id']=focus;changes=[]
+        elif kind in {'ruby_add','ruby_delete'}:
             from .ruby_structure import operate as ruby_operate
             value['working'],snapshot,paragraphs,before,after,focus,ruby_options=ruby_operate(book,paragraph_id,kind,range_start,range_end,reading,ruby_index)
             value['focus_id']=focus;changes=[]
@@ -380,6 +418,7 @@ def commit_edit(con, book_id, revision, kind, paragraph_id=None, text=None, ruby
         if snapshot is None:value['working'] = apply_changes(book,changes)
         command = {'id':str(uuid.uuid4()), 'timestamp':timestamp(), 'action':kind, 'changes':changes, 'paragraph_ids':paragraphs, 'before':before, 'after':after, 'source':source, 'state':'approved', 'reason':reason}
         if ruby_options is not None:command.update(undoable=False,ruby_options=ruby_options)
+        if chapter_options is not None:command['chapter_options']=chapter_options
         if candidate_id:command.update(candidate_id=candidate_id,engine_id=engine_id)
         if snapshot is not None:command['snapshot']=snapshot
         value['commands'] = value['commands'][:value['cursor']] + [command]

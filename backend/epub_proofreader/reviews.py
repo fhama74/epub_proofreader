@@ -39,12 +39,21 @@ def both(meta,details):
     return {target:summary(meta,details,target) for target in ('body','ruby')}
 
 
-def mark(con,book_id,paragraph_id,target='body',index=None,expected_token=None):
+def mark(con,book_id,paragraph_id,target='body',index=None,expected_token=None,*,compact=False,draft_patch=None):
     value=editing.state(con,book_id)
-    d=editing.paragraph_details(editing.working_model(value),paragraph_id,value['revision'])
+    d=editing.paragraph_details(editing.working_model(value),paragraph_id,value['revision'],include_chapter_token=False)
     if expected_token is not None and expected_token!=d['token']:
         raise editing.EditConflict('この段落が変更されています。入力は保持したまま最新の段落を確認してください。')
     meta=projects.read(con,book_id)
+    if draft_patch:
+        key=draft_patch['key'];expected=f'body:{paragraph_id}:{index if index is not None else "all"}' if target=='body' else f'ruby-review:{paragraph_id}:{index}'
+        if key!=expected:raise editing.EditConflict('未保存入力の対象が一致しません。')
+        old=meta['drafts'].get(key);new=draft_patch.get('value')
+        if old!=draft_patch.get('expected') and old!=new:raise editing.EditConflict('未保存入力が別の画面で変更されています。入力は保持しています。')
+        if new is not None:
+            if new.get('paragraphId')!=paragraph_id:raise editing.EditConflict('未保存入力の段落が一致しません。')
+            meta['drafts'][key]=new
+        else:meta['drafts'].pop(key,None)
     row=meta.setdefault('reviews',{}).setdefault(paragraph_id,{})
     # Preserve an existing whole-paragraph confirmation when marking ruby only.
     if meta['statuses'].get(paragraph_id)=='human_checked' and not row.get('body'):
@@ -62,12 +71,16 @@ def mark(con,book_id,paragraph_id,target='body',index=None,expected_token=None):
         else:
             if not 0<=index<len(d['rubies']):raise editing.EditConflict('ルビの構成が変わっています。')
             r=d['rubies'][index];marks[str(index)]=digest([d['editor_text'],r['base'],r['readings']])
-    for ident,raw in con.execute("SELECT id,data FROM ai_results WHERE book_id=? AND paragraph_id=? AND status IN ('pending','held','undone')",(book_id,paragraph_id)).fetchall():
+    reviewed=[]
+    for ident,raw,status in con.execute("SELECT id,data,status FROM ai_results WHERE book_id=? AND paragraph_id=? AND status IN ('pending','held','undone','reviewed')",(book_id,paragraph_id)).fetchall():
         item=json.loads(raw)
         covered=(item['target']=='text' and a<=item['start']<=item['end']<=b) if target=='body' else item['target']=='ruby' and (index is None or item.get('ruby_index')==index)
-        if covered:con.execute("UPDATE ai_results SET status='reviewed',updated_at=? WHERE id=?",(editing.timestamp(),ident))
+        if covered:
+            if status!='reviewed':con.execute("UPDATE ai_results SET status='reviewed',updated_at=? WHERE id=?",(editing.timestamp(),ident))
+            reviewed.append(ident)
     meta['statuses'][paragraph_id]='human_checked' if summary(meta,d)['confirmed'] else 'review'
     meta['version']+=1;projects.write(con,book_id,meta)
+    if compact:return {'book_id':book_id,'revision':value['revision'],'paragraph_id':paragraph_id,'review_state':both(meta,d),'status':meta['statuses'][paragraph_id],'reviewed_ids':reviewed,'project':meta}
     return meta
 
 

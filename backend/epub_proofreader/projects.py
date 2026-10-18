@@ -99,7 +99,8 @@ def progress(book,meta):
 def invalidate(con,book_id,value):
     if not value['history']:return
     meta=read(con,book_id);event=value['history'][-1];changed=False
-    if event['action'] in {'split','merge','undo','redo'}:
+    chapter_move=event['action']=='chapter_split' or event['action'] in {'undo','redo'} and any(c['id']==event.get('command_id') and c['action']=='chapter_split' for c in value['commands'])
+    if event['action'] in {'split','merge','undo','redo'} and not chapter_move:
         for pid in event['paragraph_ids']:
             if pid in meta.get('reviews',{}):meta['reviews'].pop(pid);changed=True
     book=editing.working_model(value);live={p['id'] for c in book.chapters for p in [*c['paragraphs'],*c.get('headings',[])]}
@@ -107,6 +108,7 @@ def invalidate(con,book_id,value):
         for pid in list(meta.get(key,{})):
             if pid not in live:meta[key].pop(pid);changed=True
     for pid in event['paragraph_ids']:
+        if chapter_move:continue
         if event['action']=='insert' and pid in meta['statuses']:continue
         if meta['statuses'].get(pid,'unchecked')!='unchecked':meta['statuses'][pid]='review';changed=True
     if event['action']=='split' and len(event['paragraph_ids'])==2:
@@ -142,7 +144,12 @@ def replay(original,state):
         command_ids.add(command['id']);kind=command.get('action');pids=command.get('paragraph_ids')
         if not isinstance(pids,list) or not pids:raise EpubError('履歴の段落指定が不正です。')
         book=editing.working_model(value);changes=[]
-        if kind in {'ruby_add','ruby_delete'}:
+        if kind=='chapter_split':
+            from .chapters import split as chapter_split
+            rebuilt,expected,affected,before,after,focus,options=chapter_split(book,pids[0],**command.get('chapter_options',{}))
+            if expected!=command.get('snapshot') or before!=command['before'] or after!=command['after'] or options!=command.get('chapter_options'):raise EpubError('章作成の履歴が一致しません。')
+            value['working']=rebuilt;value['ids']=expected['ids_after']
+        elif kind in {'ruby_add','ruby_delete'}:
             from .ruby_structure import operate as ruby_operate
             options=command.get('ruby_options',{})
             rebuilt,expected,affected,before,after,focus,_=ruby_operate(book,pids[0],kind,**options)
@@ -156,7 +163,7 @@ def replay(original,state):
             if kind=='insert':
                 if len(pids)!=2:raise EpubError('挿入履歴が不正です。')
                 after_ids=snap.get('ids_after',[])
-                options={'text':command['after'],'position':'before' if after_ids.index(pids[1])<after_ids.index(pids[0]) else 'after'}
+                options={'text':command['after'],'position':snap['position'] if 'position' in snap else ('before' if after_ids.index(pids[1])<after_ids.index(pids[0]) else 'after')}
             elif kind=='split':options={'offset':len(command['after'][0])}
             rebuilt,expected,affected,before,after,focus=operate(book,pid,kind,**options)
             if kind in {'insert','split'}:expected['ids_after']=[pids[1] if ident==focus else ident for ident in expected['ids_after']]
@@ -196,7 +203,7 @@ def replay(original,state):
         editing.working_model(value)
         if number+1==cursor:at_cursor=copy.deepcopy(value)
     for event in history:
-        if not isinstance(event,dict) or event.get('action') not in {'text','sentence','ruby','combined','replace','insert','split','merge','ruby_add','ruby_delete','undo','redo'} or not isinstance(event.get('id'),str):raise EpubError('操作履歴の形式が不正です。')
+        if not isinstance(event,dict) or event.get('action') not in {'text','sentence','ruby','combined','replace','insert','split','merge','ruby_add','ruby_delete','chapter_split','undo','redo'} or not isinstance(event.get('id'),str):raise EpubError('操作履歴の形式が不正です。')
     result={**copy.deepcopy(state),**at_cursor}
     actual=editing.working_model(result)
     supplied=Book(result['working']).apply_ids(state.get('ids',{}))

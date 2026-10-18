@@ -20,7 +20,9 @@ class WorkingFiles:
  def merge(cls,source,changes=None):
   current=dict(source.replacements) if isinstance(source,cls) else {}
   base=source.base if isinstance(source,cls) else source
-  current.update(changes or {})
+  for path,value in (changes or {}).items():
+   if value is None:current.pop(path,None)
+   else:current[path]=value
   return cls(base,tuple(sorted(current.items())))
  @cached_property
  def fingerprint(self):
@@ -38,9 +40,14 @@ def model(source):
  current=dict(source.replacements)
  if previous:
   old,book=previous;prior=dict(old.replacements)
-  changes={p:current.get(p,base.files[p]) for p in current.keys()|prior.keys() if current.get(p,base.files[p])!=prior.get(p,base.files[p])}
+  changes={p:current.get(p,base.files.get(p)) for p in current.keys()|prior.keys() if current.get(p,base.files.get(p))!=prior.get(p,base.files.get(p))}
  else:book=base;changes=current
- result=book.updated(changes) if changes else book
+ if any(p not in book.trees or data is None for p,data in changes.items()):
+  # Explicit chapter operations can change the package and add files. Text edits
+  # continue to use the XHTML-only fast path.
+  from .epub import Book
+  result=Book(source.materialize())
+ else:result=book.updated(changes) if changes else book
  # Use the exact snapshot, including removals, as the source of a later export.
  import copy
  result=copy.copy(result);result.original=source;result.fingerprint=source.fingerprint

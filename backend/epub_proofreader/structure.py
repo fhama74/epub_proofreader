@@ -10,6 +10,12 @@ def encoded(data):return base64.b64encode(data).decode('ascii')
 def decoded(data):return base64.b64decode(data,validate=True)
 def new_id():return 'paragraph-'+uuid.uuid4().hex
 
+def insertion_anchor(node):
+    containers={'body','section','article','div','blockquote','aside','main','li','td','th','dd','figure'}
+    while node.getparent() is not None and local(node.getparent()) not in containers:node=node.getparent()
+    if node.getparent() is None:raise EpubError('この位置には段落を追加できません。本文の段落を選択してください。')
+    return node
+
 def ruby_values(tree):
     return [etree.tostring(r,method='c14n',exclusive=True,with_comments=True,with_tail=False) for r in tree.xpath('//x:ruby',namespaces=NS)]
 
@@ -48,7 +54,7 @@ def operate(book,paragraph_id,action,position='after',text='',offset=None):
     chapter,_,_=locate_paragraph(book,paragraph_id)
     book=copy.copy(book);book.trees=dict(book.trees);book.trees[chapter['path']]=copy.deepcopy(book.trees[chapter['path']].getroottree()).getroot()
     chapter,record,node=locate_paragraph(book,paragraph_id)
-    if local(node)!='p' or node.getparent() is None:
+    if (action!='insert' and local(node)!='p') or node.getparent() is None:
         raise EpubError('段落の構造編集はp要素を対象にしています。リストや引用要素は保護対象です。')
     path=chapter['path'];tree=book.trees[path]
     if sum(c['path']==path for c in book.chapters)!=1:
@@ -58,11 +64,12 @@ def operate(book,paragraph_id,action,position='after',text='',offset=None):
     identifiers={element:p['id'] for element,p in zip(elements,records)}
     before_ids=[p['id'] for p in records]
     before=book.get(path);original_rubies=ruby_values(tree)
-    parent=node.getparent();index=parent.index(node);content=layout(node)[0]
+    anchor=insertion_anchor(node) if action=='insert' else node
+    parent=anchor.getparent();index=parent.index(anchor);content=layout(node)[0]
     affected=[paragraph_id]
     if action=='insert':
         if position not in {'before','after'}:raise EpubError('挿入位置が不正です。')
-        created=etree.Element(node.tag,nsmap=node.nsmap)
+        created=etree.Element('{'+NS['x']+'}p',nsmap=node.nsmap)
         try:created.text=text or None
         except ValueError as exc:raise EpubError('XMLで使用できない文字が含まれています。') from exc
         parent.insert(index+(position=='after'),created)
@@ -99,4 +106,5 @@ def operate(book,paragraph_id,action,position='after',text='',offset=None):
     if any(ident is None for ident in after_ids):raise EpubError('段落IDを再計算できません。')
     serialized=etree.tostring(tree.getroottree(),encoding=tree.getroottree().docinfo.encoding or 'UTF-8',xml_declaration=True)
     snapshot={'file':path,'before_file':encoded(before),'after_file':encoded(serialized),'chapter_id':chapter['id'],'ids_before':before_ids,'ids_after':after_ids}
+    if action=='insert' and local(node)!='p':snapshot['position']=position
     return WorkingFiles.merge(book.original,{path:serialized}),snapshot,affected,previous,following,focus

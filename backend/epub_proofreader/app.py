@@ -247,10 +247,39 @@ def editor(book_id: str,paragraph_id: str):
     with database() as con:d['review_state']=reviews.both(projects.read(con,book_id),d)
     return d
 
+class ReviewDraftRuby(BaseModel):
+    base:str=Field(max_length=1000)
+    reading:str=Field(max_length=2000)
+
+class ReviewDraftRange(BaseModel):
+    index:int=Field(ge=0)
+    start:int=Field(ge=0)
+    end:int=Field(ge=1)
+    baseBefore:str=Field(max_length=1000)
+    readingBefore:str=Field(max_length=2000)
+
+class ReviewDraft(BaseModel):
+    paragraphToken:str|None=Field(default=None,max_length=64)
+    revision:int=Field(ge=0)
+    text:str=Field(max_length=20000)
+    rubies:dict[str,ReviewDraftRuby]=Field(default_factory=dict,max_length=1000)
+    reason:str=Field(max_length=1000)
+    paragraphId:str=Field(max_length=128)
+    sentenceIndex:int|None=Field(default=None,ge=0)
+    before:str=Field(max_length=20000)
+    rubyRange:ReviewDraftRange|None=None
+
+class ReviewDraftPatch(BaseModel):
+    key:str=Field(max_length=256)
+    expected:ReviewDraft|None=None
+    value:ReviewDraft|None=None
+
 class ReviewRequest(BaseModel):
     target: Literal['body','ruby'] = 'body'
     index: int | None = Field(default=None,ge=0)
     expected_token: str = Field(min_length=64,max_length=64)
+    compact:bool=False
+    draft_patch:ReviewDraftPatch|None=None
 
 class ReviewReset(BaseModel):
     scope: Literal['paragraph','chapter','book'] = 'paragraph'
@@ -272,7 +301,9 @@ def confirm_review(book_id:str,paragraph_id:str,request:ReviewRequest):
     load_book(book_id)
     with database() as con:
         con.execute('BEGIN IMMEDIATE')
-        reviews.mark(con,book_id,paragraph_id,request.target,request.index,request.expected_token)
+        patch=request.draft_patch.model_dump(exclude_unset=True) if request.draft_patch else None
+        receipt=reviews.mark(con,book_id,paragraph_id,request.target,request.index,request.expected_token,compact=request.compact,draft_patch=patch)
+        if request.compact:return receipt
         result=snapshot(book_id,editing.state(con,book_id),projects.read(con,book_id),library.info(con,book_id))
     return result
 
@@ -310,6 +341,16 @@ def edit_combined(book_id:str,paragraph_id:str,request:CombinedRequest):
 @app.post('/api/books/{book_id}/structure')
 def edit_structure(book_id: str,request: StructureRequest):
     return mutate(book_id,request,request.action,paragraph_id=request.paragraph_id,text=request.text,position=request.position,offset=request.offset)
+
+class ChapterSplitRequest(RevisionRequest):
+    paragraph_id:str=Field(max_length=128)
+    title:str=Field(min_length=1,max_length=200)
+    expected_token:str=Field(min_length=64,max_length=64)
+    expected_chapter_token:str=Field(min_length=64,max_length=64)
+
+@app.post('/api/books/{book_id}/chapters/split')
+def split_chapter(book_id:str,request:ChapterSplitRequest):
+    return mutate(book_id,request,'chapter_split',paragraph_id=request.paragraph_id,text=request.title)
 
 @app.patch('/api/books/{book_id}/paragraphs/{paragraph_id}/rubies/{ruby_index}')
 def edit_ruby(book_id: str,paragraph_id: str,ruby_index: int,request: RubyRequest):

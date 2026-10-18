@@ -27,9 +27,11 @@ def state(con,book_id):
         j['errors']=[{'paragraph_id':r[0],'error':r[1]} for r in con.execute("SELECT paragraph_id,error FROM ai_items WHERE job_id=? AND status='failed'",(j['id'],))]
         result_jobs.append(j)
     results=[];value=editing.state(con,book_id);active={c['id'] for c in value['commands'][:value['cursor']]};known={c['id'] for c in value['commands']}
-    book=None;hashes={}
+    book,hashes=evidence(value['working'],json.dumps(value['ids'],sort_keys=True))
+    locations={p['id']:c['id'] for c in book.chapters for p in [*c['paragraphs'],*c.get('headings',[])]}
     for row in con.execute('SELECT * FROM ai_results WHERE book_id=? AND owner_id=? AND id NOT IN (SELECT result_id FROM ai_cleared_results) ORDER BY created_at,id',(book_id,em.OWNER)).fetchall():
         r=dict(row);r.update(json.loads(r.pop('data')));r['engine_name']=engines.get(r['engine_id'],{}).get('name',next((j['config']['name'] for j in result_jobs if j['id']==r['job_id']),r['model_name']))
+        r['chapter_id']=locations.get(r['paragraph_id'],r['chapter_id'])
         if r['command_id']:
             r['status']='approved' if r['command_id'] in active else 'undone' if r['command_id'] in known else 'superseded'
         if r['status'] in {'pending','held','undone'}:

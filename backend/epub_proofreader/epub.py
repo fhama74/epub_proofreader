@@ -184,8 +184,9 @@ class Book:
             for ruby in element.xpath('.//x:ruby',namespaces=NS):
                 rubies.append({'xpath':tree.getroottree().getpath(ruby),'base':base_text(ruby),'readings':[''.join(rt.itertext()) for rt in ruby.xpath('.//x:rt',namespaces=NS)],'editable':simple_ruby(ruby),'original_xml':etree.tostring(ruby,encoding='unicode',with_tail=False)})
             headings.append({'id':f'chapter{number:04d}-h{index:05d}','xpath':tree.getroottree().getpath(element),'text':base_text(element),'original_xml':etree.tostring(element,encoding='unicode',with_tail=False),'rubies':rubies,'status':'unchecked','revision':0,'next_paragraph_index':following,**describe(element)[0]})
-        title = tree.xpath("//x:h1//text() | //x:h2//text()", namespaces=NS) or tree.xpath("//x:title/text()", namespaces=NS)
-        return {"id": f"chapter{number:04d}", "path": item["path"], "title": "".join(title).strip() or f"第{number}章", "paragraphs": paragraphs, "headings": headings, "writing_mode": chapter_mode(tree,item["path"],self.files,reference)}
+        titles=tree.xpath('//x:body//x:h1 | //x:body//x:h2',namespaces=NS)
+        title=base_text(titles[0]) if titles else ''.join(tree.xpath('//x:title/text()',namespaces=NS))
+        return {"id": f"chapter{number:04d}", "path": item["path"], "title": title.strip() or f"第{number}章", "paragraphs": paragraphs, "headings": headings, "writing_mode": chapter_mode(tree,item["path"],self.files,reference)}
 
     def read_xml(self, path):
         data=self.get(path)
@@ -238,10 +239,17 @@ class Book:
         result=copy.copy(self);result.chapters=list(self.chapters);changed=[]
         for index,chapter in enumerate(self.chapters):
             ids=mapping.get(chapter['id'])
-            if ids is not None:
+            heading_ids=mapping.get(chapter['id']+':headings')
+            if ids is not None or heading_ids is not None:
+                if ids is None:ids=[p['id'] for p in chapter['paragraphs']]
                 if len(ids)!=len(chapter['paragraphs']) or len(set(ids))!=len(ids):raise EpubError('段落IDと章の構造が一致しません。')
                 chapter=copy.deepcopy(chapter);result.chapters[index]=chapter;changed.append(chapter)
                 for paragraph,ident in zip(chapter['paragraphs'],ids):paragraph['id']=ident
+                if heading_ids is not None:
+                    if len(heading_ids)!=len(chapter['headings']) or len(set(heading_ids))!=len(heading_ids):raise EpubError('見出しIDと章の構造が一致しません。')
+                    for heading,ident in zip(chapter['headings'],heading_ids):heading['id']=ident
+        all_ids=[p['id'] for c in result.chapters for p in [*c['paragraphs'],*c['headings']]]
+        if len(all_ids)!=len(set(all_ids)):raise EpubError('段落・見出しのIDが重複しています。')
         result.refresh_units(changed)
         return result
 
