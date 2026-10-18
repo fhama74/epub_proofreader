@@ -99,8 +99,12 @@ def progress(book,meta):
 def invalidate(con,book_id,value):
     if not value['history']:return
     meta=read(con,book_id);event=value['history'][-1];changed=False
+    command=next((c for c in value['commands'] if c['id']==event.get('command_id',event['id'])),{})
+    split_insert=event['action']=='insert' and 'key' in command.get('snapshot',{})
     chapter_move=event['action']=='chapter_split' or event['action'] in {'undo','redo'} and any(c['id']==event.get('command_id') and c['action']=='chapter_split' for c in value['commands'])
-    if event['action'] in {'split','merge','undo','redo'} and not chapter_move:
+    options=command.get('chapter_options',{});right_id='paragraph-'+options.get('key','')
+    chapter_cut=chapter_move and options.get('boundary',0)>0 and any(right_id in ids for name,ids in command.get('snapshot',{}).get('ids_after',{}).items() if not name.endswith(':headings'))
+    if event['action'] in {'split','merge','merge_next','undo','redo'} and not chapter_move or split_insert or chapter_cut:
         for pid in event['paragraph_ids']:
             if pid in meta.get('reviews',{}):meta['reviews'].pop(pid);changed=True
     book=editing.working_model(value);live={p['id'] for c in book.chapters for p in [*c['paragraphs'],*c.get('headings',[])]}
@@ -108,16 +112,20 @@ def invalidate(con,book_id,value):
         for pid in list(meta.get(key,{})):
             if pid not in live:meta[key].pop(pid);changed=True
     for pid in event['paragraph_ids']:
-        if chapter_move:continue
-        if event['action']=='insert' and pid in meta['statuses']:continue
+        if chapter_move and not chapter_cut:continue
+        if event['action']=='insert' and not split_insert and pid in meta['statuses']:continue
         if meta['statuses'].get(pid,'unchecked')!='unchecked':meta['statuses'][pid]='review';changed=True
     if event['action']=='split' and len(event['paragraph_ids'])==2:
         old,new=event['paragraph_ids']
         if old in meta['mappings']:meta['mappings'][new]=copy.deepcopy(meta['mappings'][old]);changed=True
-    if event['action']=='merge' and len(event['paragraph_ids'])==2:
+    if event['action'] in {'merge','merge_next'} and len(event['paragraph_ids'])==2:
         prior,current=event['paragraph_ids']
         if current in meta['mappings']:
             meta['mappings'][prior]=meta['mappings'].get(prior,[])+[m for m in meta['mappings'][current] if m not in meta['mappings'].get(prior,[])];changed=True
+    if split_insert and event['paragraph_ids'][0] in meta['mappings']:
+        meta['mappings'][event['paragraph_ids'][2]]=copy.deepcopy(meta['mappings'][event['paragraph_ids'][0]]);changed=True
+    if chapter_cut and event['action']=='chapter_split' and event['paragraph_ids'][0] in meta['mappings']:
+        meta['mappings'][right_id]=copy.deepcopy(meta['mappings'][event['paragraph_ids'][0]]);changed=True
     if changed:meta['version']+=1;write(con,book_id,meta)
 
 def checked_body_changes(book,value,command,pids,before,after):
@@ -156,14 +164,15 @@ def replay(original,state):
             if expected!=command.get('snapshot') or before!=command['before'] or after!=command['after'] or command.get('undoable') is not False:raise EpubError('ルビ操作の履歴が一致しません。')
             if number>=cursor:raise EpubError('取り消せないルビ操作より前のUndo位置は指定できません。')
             value['working']=rebuilt
-        elif kind in {'insert','split','merge'}:
+        elif kind in {'insert','split','merge','merge_next'}:
             snap=command.get('snapshot',{});pid=pids[0]
             if kind=='merge':pid=pids[1]
             options={}
             if kind=='insert':
-                if len(pids)!=2:raise EpubError('挿入履歴が不正です。')
+                if len(pids)!=(3 if 'key' in snap else 2):raise EpubError('挿入履歴が不正です。')
                 after_ids=snap.get('ids_after',[])
                 options={'text':command['after'],'position':snap['position'] if 'position' in snap else ('before' if after_ids.index(pids[1])<after_ids.index(pids[0]) else 'after')}
+                if 'boundary' in snap:options.update(boundary=snap['boundary'],key=snap.get('key'))
             elif kind=='split':options={'offset':len(command['after'][0])}
             rebuilt,expected,affected,before,after,focus=operate(book,pid,kind,**options)
             if kind in {'insert','split'}:expected['ids_after']=[pids[1] if ident==focus else ident for ident in expected['ids_after']]
@@ -203,7 +212,7 @@ def replay(original,state):
         editing.working_model(value)
         if number+1==cursor:at_cursor=copy.deepcopy(value)
     for event in history:
-        if not isinstance(event,dict) or event.get('action') not in {'text','sentence','ruby','combined','replace','insert','split','merge','ruby_add','ruby_delete','chapter_split','undo','redo'} or not isinstance(event.get('id'),str):raise EpubError('操作履歴の形式が不正です。')
+        if not isinstance(event,dict) or event.get('action') not in {'text','sentence','ruby','combined','replace','insert','split','merge','merge_next','ruby_add','ruby_delete','chapter_split','undo','redo'} or not isinstance(event.get('id'),str):raise EpubError('操作履歴の形式が不正です。')
     result={**copy.deepcopy(state),**at_cursor}
     actual=editing.working_model(result)
     supplied=Book(result['working']).apply_ids(state.get('ids',{}))

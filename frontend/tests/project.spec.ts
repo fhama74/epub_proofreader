@@ -11,6 +11,8 @@ test('inline body editing and separate ruby window preserve drafts across naviga
   await expect(body).toHaveValue('吾輩は猫である。名まえはまだない。');
   await expect(page.locator('.diff-mirror .diff-changed')).toHaveText('まえ');
   await page.getByRole('button',{name:'更新',exact:true}).click();
+  await expect(page.getByLabel('現在の本文',{exact:true})).toContainText('今日は良い天汽');
+  await page.getByLabel('前の段落・文',{exact:true}).click();
   await expect(page.getByLabel('現在の本文',{exact:true})).toHaveText('吾輩は猫である。名まえはまだない。');
   await page.getByRole('button',{name:'ルビの訂正',exact:true}).click();
   const ruby=page.getByRole('dialog',{name:'ルビの訂正',exact:true});

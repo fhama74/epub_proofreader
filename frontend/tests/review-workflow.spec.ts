@@ -9,6 +9,8 @@ test('review badge changes on confirmation/reset; touch ruby addition and remova
  const text=await body.inputValue();
  await expect(page.getByLabel('段落の校閲状態：未確定',{exact:true})).toBeVisible();
  await page.getByRole('button',{name:'確認済みにする',exact:true}).click();
+ await expect(body).toHaveValue('静かな午後、書物を開いて一文字ずつ確かめた。');
+ await page.getByLabel('前の段落・文',{exact:true}).click();
  await expect(page.getByLabel('段落の校閲状態：確定済み',{exact:true})).toBeVisible();
  await page.getByText('校閲状態をリセット',{exact:true}).click();
  await page.getByRole('button',{name:'未確定に戻す',exact:true}).click();
@@ -44,12 +46,18 @@ test('two browsers save different paragraphs and preserve a conflicting input',a
   await firstText.fill(a+'甲。');await secondText.fill(b+'乙。');
   await page.getByRole('button',{name:'更新',exact:true}).click();
   await second.getByRole('button',{name:'更新',exact:true}).click();
+  await expect(second.getByLabel('章の選択',{exact:true})).toHaveValue('1');
+  await second.getByLabel('前の段落・文',{exact:true}).click();
   await expect(second.getByLabel('現在の本文',{exact:true})).toHaveText(b+'乙。');
-  // A still holds the old third paragraph. B saves another change first.
+  // Refresh A at the third paragraph, then let B save a conflicting change.
+  await expect(firstText).toHaveValue(/書物/);
+  await page.getByLabel('前の段落・文',{exact:true}).click();
   await page.getByLabel('次の段落・文',{exact:true}).click();
   await expect(firstText).toHaveValue(b+'乙。');
   await firstText.fill(b+'未保存。');await secondText.fill(b+'乙。追加。');
   await second.getByRole('button',{name:'更新',exact:true}).click();
+  await expect(second.getByLabel('章の選択',{exact:true})).toHaveValue('1');
+  await second.getByLabel('前の段落・文',{exact:true}).click();
   await expect(second.getByLabel('現在の本文',{exact:true})).toHaveText(b+'乙。追加。');
   await page.getByRole('button',{name:'更新',exact:true}).click();
   await expect(page.getByRole('alert').filter({hasText:'この段落は別のブラウザーで変更'})).toBeVisible();

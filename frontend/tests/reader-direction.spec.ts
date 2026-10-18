@@ -26,6 +26,8 @@ test('vertical EPUB shows next page on the left and highlights only differing ch
  await expect(page.locator('.diff-mirror .diff-changed')).toHaveText('気');
  await expect(page.locator('.diff-mirror .diff-changed')).toHaveCSS('color','rgb(180, 49, 49)');
  await page.getByRole('button',{name:'更新',exact:true}).click();
+  await expect(page.getByLabel('現在の本文',{exact:true})).toContainText('静かな午後');
+  await page.getByLabel('前の段落・文',{exact:true}).click();
  await expect(page.getByLabel('現在の本文',{exact:true})).toContainText('天気');
  await expect(page.locator('.diff-changed')).toHaveCount(0);
 });

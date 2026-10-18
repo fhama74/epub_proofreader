@@ -1,6 +1,7 @@
 """Explicit reversible paragraph operations. Original EPUB is never modified."""
 import base64
 import copy
+import re
 import uuid
 from lxml import etree
 from .epub import EpubError, NS, local
@@ -48,7 +49,7 @@ def split_element(node,offset):
         text_part(child.tail)
     return left,right
 
-def operate(book,paragraph_id,action,position='after',text='',offset=None):
+def operate(book,paragraph_id,action,position='after',text='',offset=None,boundary=None,key=None):
     from .editing import locate_paragraph
     from .working import WorkingFiles
     chapter,_,_=locate_paragraph(book,paragraph_id)
@@ -72,9 +73,24 @@ def operate(book,paragraph_id,action,position='after',text='',offset=None):
         created=etree.Element('{'+NS['x']+'}p',nsmap=node.nsmap)
         try:created.text=text or None
         except ValueError as exc:raise EpubError('XMLで使用できない文字が含まれています。') from exc
-        parent.insert(index+(position=='after'),created)
-        focus=new_id();identifiers[created]=focus
+        if boundary is not None and (type(boundary) is not int or not 0<=boundary<=len(content)):raise EpubError('文の挿入位置が不正です。')
+        if boundary is not None and local(node)!='p':raise EpubError('文の前後への挿入は通常の本文段落を対象にしています。')
+        middle=boundary is not None and 0<boundary<len(content)
+        if middle:
+            key=key or uuid.uuid4().hex
+            if not re.fullmatch('[0-9a-f]{32}',key):raise EpubError('段落の識別子が不正です。')
+            for _,start,end in layout(node)[2]:
+                if start<boundary<end:raise EpubError('ルビの途中には段落を挿入できません。')
+            left,right=split_element(node,boundary);left.tail=None;right.tail=node.tail
+            parent.replace(node,left);parent.insert(index+1,created);parent.insert(index+2,right)
+            identifiers[left]=paragraph_id;identifiers[right]='paragraph-'+key+'-right'
+            focus='paragraph-'+key
+        else:
+            parent.insert(index+(boundary==len(content) if boundary is not None else position=='after'),created)
+            focus=new_id()
+        identifiers[created]=focus
         previous='';following=text;affected.append(focus)
+        if middle:affected.append(identifiers[right])
     elif action=='split':
         if offset is None or not 0<offset<len(content):raise EpubError('段落の先頭・末尾以外にカーソルを置いてください。')
         for _,start,end in layout(node)[2]:
@@ -85,11 +101,15 @@ def operate(book,paragraph_id,action,position='after',text='',offset=None):
         identifiers[left]=paragraph_id;focus=new_id();identifiers[right]=focus
         previous=content;following=[layout(left)[0],layout(right)[0]];affected.append(focus)
         if ''.join(following)!=content:raise EpubError('分割後の本文が一致しません。操作を中止しました。')
-    elif action=='merge':
+    elif action in {'merge','merge_next'}:
         paragraph_index=records.index(record)
+        if action=='merge_next':
+            if paragraph_index+1>=len(records):raise EpubError('この章の末尾段落は後ろの段落と統合できません。')
+            prior=node;node=elements[paragraph_index+1];paragraph_id=records[paragraph_index+1]['id'];record=records[paragraph_index+1]
+            paragraph_index+=1;content=layout(node)[0]
+        else:prior=elements[paragraph_index-1] if paragraph_index else None
         if paragraph_index==0:raise EpubError('この章の先頭段落は前の段落に結合できません。')
-        prior=elements[paragraph_index-1]
-        if local(prior)!='p' or prior.getparent() is not parent or prior.getnext() is not node:
+        if local(prior)!='p' or local(node)!='p' or prior.getparent() is not parent or prior.getnext() is not node:
             raise EpubError('見出し・画像・区切り・別セクションをまたぐ結合はできません。')
         focus=records[paragraph_index-1]['id'];affected=[focus,paragraph_id]
         previous=[layout(prior)[0],content]
@@ -107,4 +127,7 @@ def operate(book,paragraph_id,action,position='after',text='',offset=None):
     serialized=etree.tostring(tree.getroottree(),encoding=tree.getroottree().docinfo.encoding or 'UTF-8',xml_declaration=True)
     snapshot={'file':path,'before_file':encoded(before),'after_file':encoded(serialized),'chapter_id':chapter['id'],'ids_before':before_ids,'ids_after':after_ids}
     if action=='insert' and local(node)!='p':snapshot['position']=position
+    if action=='insert' and boundary is not None:
+        snapshot.update(boundary=boundary,position=position)
+        if middle:snapshot['key']=key
     return WorkingFiles.merge(book.original,{path:serialized}),snapshot,affected,previous,following,focus

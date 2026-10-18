@@ -156,11 +156,12 @@ class CombinedRequest(TextRequest):
 class StructureRequest(RevisionRequest):
     expected_token: str | None = Field(default=None,min_length=64,max_length=64)
     expected_chapter_token: str | None = Field(default=None,min_length=64,max_length=64)
-    action: Literal['insert','split','merge']
+    action: Literal['insert','split','merge','merge_next']
     paragraph_id: str = Field(max_length=128)
     position: Literal['before','after'] = 'after'
     text: str = Field(default='',max_length=20000)
     offset: int | None = Field(default=None,ge=0)
+    sentence_index:int|None=Field(default=None,ge=0,strict=True)
 
 class RubyRequest(RevisionRequest):
     expected_token: str | None = Field(default=None,min_length=64,max_length=64)
@@ -340,17 +341,20 @@ def edit_combined(book_id:str,paragraph_id:str,request:CombinedRequest):
 
 @app.post('/api/books/{book_id}/structure')
 def edit_structure(book_id: str,request: StructureRequest):
-    return mutate(book_id,request,request.action,paragraph_id=request.paragraph_id,text=request.text,position=request.position,offset=request.offset)
+    return mutate(book_id,request,request.action,paragraph_id=request.paragraph_id,text=request.text,position=request.position,offset=request.offset,sentence_index=request.sentence_index)
 
 class ChapterSplitRequest(RevisionRequest):
     paragraph_id:str=Field(max_length=128)
     title:str=Field(min_length=1,max_length=200)
+    level:int=Field(default=1,ge=1,le=6,strict=True)
+    position:Literal['before','after']|None=None
+    sentence_index:int|None=Field(default=None,ge=0,strict=True)
     expected_token:str=Field(min_length=64,max_length=64)
     expected_chapter_token:str=Field(min_length=64,max_length=64)
 
 @app.post('/api/books/{book_id}/chapters/split')
 def split_chapter(book_id:str,request:ChapterSplitRequest):
-    return mutate(book_id,request,'chapter_split',paragraph_id=request.paragraph_id,text=request.title)
+    return mutate(book_id,request,'chapter_split',paragraph_id=request.paragraph_id,text=request.title,chapter_level=request.level,chapter_position=request.position,sentence_index=request.sentence_index)
 
 @app.patch('/api/books/{book_id}/paragraphs/{paragraph_id}/rubies/{ruby_index}')
 def edit_ruby(book_id: str,paragraph_id: str,ruby_index: int,request: RubyRequest):

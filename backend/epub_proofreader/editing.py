@@ -293,7 +293,7 @@ def save_state(con, book_id, value):
     for path,content in desired.items():
         if existing.get(path)!=content:con.execute('INSERT INTO editing_files VALUES (?,?,?) ON CONFLICT(book_id,path) DO UPDATE SET content=excluded.content',(book_id,path,content))
 
-def commit_edit(con, book_id, revision, kind, paragraph_id=None, text=None, ruby_index=None, base=None, reading=None, reason='手動校正', target=None, replacement=None, sentence_index=None, expected_sentence=None, position='after', offset=None, rubies=None, source='manual', candidate_id=None, engine_id=None, span_start=None, span_end=None, expected_span=None, range_start=None, range_end=None, expected_token=None, expected_chapter_token=None):
+def commit_edit(con, book_id, revision, kind, paragraph_id=None, text=None, ruby_index=None, base=None, reading=None, reason='手動校正', target=None, replacement=None, sentence_index=None, expected_sentence=None, position='after', offset=None, rubies=None, source='manual', candidate_id=None, engine_id=None, span_start=None, span_end=None, expected_span=None, range_start=None, range_end=None, expected_token=None, expected_chapter_token=None, chapter_level=None, chapter_position=None):
     value = state(con,book_id)
     book = working_model(value)
     granular=False
@@ -301,7 +301,7 @@ def commit_edit(con, book_id, revision, kind, paragraph_id=None, text=None, ruby
         current=paragraph_details(book,paragraph_id,value['revision'])
         if expected_token and current['token']!=expected_token:raise EditConflict('この段落は別のブラウザーで変更されています。入力は保持しています。最新版を確認してください。')
         if expected_chapter_token and current['chapter_token']!=expected_chapter_token:raise EditConflict('この章の内容・構造が変更されています。入力は保持しています。章を再読み込みしてください。')
-        granular=kind in {'text','sentence','ruby','combined','ruby_add','ruby_delete'} and bool(expected_token) or kind in {'insert','split','merge'} and bool(expected_chapter_token)
+        granular=kind in {'text','sentence','ruby','combined','ruby_add','ruby_delete'} and bool(expected_token) or kind in {'insert','split','merge','merge_next'} and bool(expected_chapter_token)
     if value['revision']!=revision and (not granular or revision>value['revision']):
         raise EditConflict('別の画面で編集されています。入力は保持しています。最新の内容を再読み込みしてください。')
     if kind in {'undo','redo'}:
@@ -336,15 +336,27 @@ def commit_edit(con, book_id, revision, kind, paragraph_id=None, text=None, ruby
         chapter_options=None
         if kind=='chapter_split':
             from .chapters import split as chapter_split
-            value['working'],snapshot,paragraphs,before,after,focus,chapter_options=chapter_split(book,paragraph_id,text or '')
+            boundary=None
+            if chapter_position is not None:
+                d=paragraph_details(book,paragraph_id,value['revision']);span=None
+                if sentence_index is not None:
+                    if not 0<=sentence_index<len(d['sentences']):raise EpubError('選択した文が見つかりません。')
+                    span=d['sentences'][sentence_index]
+                boundary=(span['start'] if span else 0) if chapter_position=='before' else (span['end'] if span else len(d['editor_text']))
+            value['working'],snapshot,paragraphs,before,after,focus,chapter_options=chapter_split(book,paragraph_id,text or '',level=chapter_level,boundary=boundary,boundary_after=chapter_position=='after')
             value['ids']=snapshot['ids_after'];value['focus_id']=focus;changes=[]
         elif kind in {'ruby_add','ruby_delete'}:
             from .ruby_structure import operate as ruby_operate
             value['working'],snapshot,paragraphs,before,after,focus,ruby_options=ruby_operate(book,paragraph_id,kind,range_start,range_end,reading,ruby_index)
             value['focus_id']=focus;changes=[]
-        elif kind in {'insert','split','merge'}:
+        elif kind in {'insert','split','merge','merge_next'}:
             from .structure import operate
-            value['working'],snapshot,paragraphs,before,after,focus=operate(book,paragraph_id,kind,position=position,text=text or '',offset=offset)
+            boundary=None
+            if kind=='insert' and sentence_index is not None:
+                d=paragraph_details(book,paragraph_id,value['revision'])
+                if not 0<=sentence_index<len(d['sentences']):raise EpubError('選択した文が見つかりません。')
+                boundary=d['sentences'][sentence_index]['start' if position=='before' else 'end']
+            value['working'],snapshot,paragraphs,before,after,focus=operate(book,paragraph_id,kind,position=position,text=text or '',offset=offset,boundary=boundary)
             value['ids'][snapshot['chapter_id']]=snapshot['ids_after']
             value['focus_id']=focus
             changes=[]

@@ -64,7 +64,7 @@ test('reader page arrows sit on the sides and page turns keep the editor closed'
  expect(pdfNext!.x).toBeLessThan(pdfPrevious!.x);expect(pdfNext!.height).toBeGreaterThanOrEqual(80);
 });
 
-test('body page navigation crosses chapters and an update returns to reading',async({page})=>{
+test('body page navigation crosses chapters and toolbar editing stays open',async({page})=>{
  await newProject(page,'book.epub');
  const position=page.getByLabel('本文表示ページ',{exact:true});
  const next=page.getByLabel('本文次の表示ページ',{exact:true});
@@ -77,5 +77,5 @@ test('body page navigation crosses chapters and an update returns to reading',as
  await page.getByLabel('本文前の表示ページ',{exact:true}).click();await expect(page.getByLabel('章の選択',{exact:true})).toHaveValue('0');
  await expect.poll(async()=>{const values=(await position.innerText()).match(/\d+/g)!.map(Number);return values[0]===values[1];}).toBe(true);
  await page.getByRole('button',{name:'編集',exact:true}).click();const editor=page.getByLabel('本文を編集',{exact:true});await expect(editor).toBeEnabled();await editor.fill((await editor.inputValue())+'追記。');await page.getByRole('button',{name:'更新',exact:true}).click();
- await expect(page.locator('.info-pane')).toBeHidden();await expect(page.locator('.epub-pane')).toBeVisible();
+ await expect(page.locator('.info-pane')).toBeVisible();await expect(page.locator('.epub-pane')).toBeHidden();
 });

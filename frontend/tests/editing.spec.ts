@@ -6,6 +6,8 @@ test('edit, undo, redo, ruby and validated EPUB download',async({page})=>{
   await page.getByRole('button',{name:'次の段落・文'}).click();
   await page.getByLabel('本文を編集',{exact:true}).fill('今日は良い天気だった。庭の向こうで、小さな鳥が鳴いている。');
   await page.getByRole('button',{name:'更新',exact:true}).click();
+  await expect(page.getByLabel('現在の本文',{exact:true})).toContainText('静かな午後');
+  await page.getByLabel('前の段落・文',{exact:true}).click();
   const frame=page.frameLocator('iframe');
   await expect(frame.locator('p.selected')).toContainText('天気');
   await menuAction(page,'Undo');
@@ -61,22 +63,21 @@ test('sentence navigation and reversible paragraph split, merge and insertion',a
   await expect(page.getByLabel('本文を編集',{exact:true})).toBeVisible();
   await expect(page.getByLabel('本文を編集',{exact:true})).toHaveValue('庭の景色を眺めながら本文の校正と段落の移動を確かめます。');
   await page.getByLabel('本文を編集',{exact:true}).press('Home');
-  await page.getByText('既存の段落を二つに分ける',{exact:true}).click();
-  await page.getByRole('button',{name:'カーソル位置で段落を分割',exact:true}).click();
+  await page.getByRole('button',{name:'カーソル位置で段落を二つに分ける',exact:true}).click();
   await expect(page.locator('.proof-position')).toContainText('/ 4');
-  await page.getByText('段落・原本との対応',{exact:true}).click();
-  await page.getByRole('button',{name:'前の段落に結合',exact:true}).click();
-  await page.getByRole('button',{name:'前の段落に結合して再計算',exact:true}).click();
+
+  await page.getByRole('button',{name:'前の段落に統合',exact:true}).click();
+  await page.getByRole('button',{name:'段落を統合して再計算',exact:true}).click();
   await expect(page.locator('.proof-position')).toContainText('/ 3');
   await expect(page.getByRole('dialog',{name:'段落の挿入・結合'})).toHaveCount(0);
-  await page.locator('.info-pane').getByRole('button',{name:'欠けた本文を段落として追加',exact:true}).click();
+  await page.locator('.info-pane').getByRole('button',{name:'現在の文の後に段落を追加',exact:true}).click();
   await page.getByLabel('挿入する本文',{exact:true}).fill('補完した本文。');
   await page.getByRole('button',{name:'段落を挿入して再計算',exact:true}).click();
-  await expect(page.locator('.proof-position')).toContainText('/ 4');
+  await expect(page.locator('.proof-position')).toContainText('/ 5');
   await menuAction(page,'Undo');
   await expect(page.locator('.proof-position')).toContainText('/ 3');
   await menuAction(page,'Redo');
-  await expect(page.locator('.proof-position')).toContainText('/ 4');
+  await expect(page.locator('.proof-position')).toContainText('/ 5');
 });
 
 
@@ -86,8 +87,8 @@ test('proof controls live in pane 03 and selected sentences stay in view',async(
   await expect(page.locator('.epub-pane').getByRole('button',{name:'ルビの訂正',exact:true})).toHaveCount(0);
   await expect(page.locator('.epub-pane .unit-controls')).toHaveCount(0);
   await expect(page.locator('.info-pane').getByLabel('次の段落・文',{exact:true})).toHaveCount(1);
-  await page.getByText('段落・原本との対応',{exact:true}).click();
-  await expect(page.locator('.info-pane').getByRole('button',{name:'欠けた本文を段落として追加',exact:true})).toBeVisible();
+
+  await expect(page.locator('.info-pane').getByRole('button',{name:'現在の文の後に段落を追加',exact:true})).toBeVisible();
   for(const direction of [1,1,1,1,1,1,1,1,1,1,1,1,-1,-1,-1]){
     await page.getByLabel(direction>0?'次の段落・文':'前の段落・文',{exact:true}).click();
     await expect.poll(()=>page.frameLocator('iframe').locator('html').evaluate(root=>{
@@ -122,5 +123,7 @@ test('switching paragraphs disables editing until the new text is loaded',async(
   await expect(editor).toBeEnabled();
   await editor.fill('今日は良い天気だった。庭の向こうで、小さな鳥が鳴いている。');
   await page.getByRole('button',{name:'更新',exact:true}).click();
+  await expect(page.getByLabel('現在の本文',{exact:true})).toContainText('静かな午後');
+  await page.getByLabel('前の段落・文',{exact:true}).click();
   await expect(page.getByLabel('現在の本文',{exact:true})).toContainText('天気');
 });

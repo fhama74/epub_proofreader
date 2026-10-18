@@ -8,6 +8,7 @@ import copy
 import hashlib
 import io
 import posixpath
+import re
 import stat
 import zipfile
 from urllib.parse import unquote, urlsplit, quote
@@ -178,15 +179,19 @@ class Book:
         for paragraph, element in zip(paragraphs,elements):
             paragraph.update(describe(element)[0])
         headings=[]
-        for index, element in enumerate(tree.xpath('//x:body//x:h1 | //x:body//x:h2 | //x:body//x:h3 | //x:body//x:h4 | //x:body//x:h5 | //x:body//x:h6', namespaces=NS),1):
+        heading_elements=tree.xpath('//x:body//x:h1 | //x:body//x:h2 | //x:body//x:h3 | //x:body//x:h4 | //x:body//x:h5 | //x:body//x:h6',namespaces=NS)
+        for index, element in enumerate(heading_elements,1):
             following=next((i for i,p in enumerate(elements) if element in p.xpath('preceding::*')),len(elements))
             rubies=[]
             for ruby in element.xpath('.//x:ruby',namespaces=NS):
                 rubies.append({'xpath':tree.getroottree().getpath(ruby),'base':base_text(ruby),'readings':[''.join(rt.itertext()) for rt in ruby.xpath('.//x:rt',namespaces=NS)],'editable':simple_ruby(ruby),'original_xml':etree.tostring(ruby,encoding='unicode',with_tail=False)})
             headings.append({'id':f'chapter{number:04d}-h{index:05d}','xpath':tree.getroottree().getpath(element),'text':base_text(element),'original_xml':etree.tostring(element,encoding='unicode',with_tail=False),'rubies':rubies,'status':'unchecked','revision':0,'next_paragraph_index':following,**describe(element)[0]})
         titles=tree.xpath('//x:body//x:h1 | //x:body//x:h2',namespaces=NS)
+        # Keep imported chapter labels stable for historical edit replay; an
+        # explicit chapter we created always takes its own heading as the title.
+        if heading_elements and re.fullmatch(r'chapter-[0-9a-f]{32}',heading_elements[0].get('id','')):titles=heading_elements[:1]
         title=base_text(titles[0]) if titles else ''.join(tree.xpath('//x:title/text()',namespaces=NS))
-        return {"id": f"chapter{number:04d}", "path": item["path"], "title": title.strip() or f"第{number}章", "paragraphs": paragraphs, "headings": headings, "writing_mode": chapter_mode(tree,item["path"],self.files,reference)}
+        return {"id": f"chapter{number:04d}", "path": item["path"], "title": title.strip() or f"第{number}章", "heading_level": int(local(heading_elements[0])[1]) if heading_elements else 1, "paragraphs": paragraphs, "headings": headings, "writing_mode": chapter_mode(tree,item["path"],self.files,reference)}
 
     def read_xml(self, path):
         data=self.get(path)
