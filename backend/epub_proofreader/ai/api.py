@@ -2,11 +2,11 @@ import asyncio,json,sqlite3
 from functools import lru_cache
 from uuid import uuid4
 from typing import Literal
-from fastapi import HTTPException,Request
+from fastapi import HTTPException,Request,Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel,Field
 from .. import editing,projects,library
-from . import engine_manager as em,jobs,prompts
+from . import engine_manager as em,jobs,prompts,diagnostics
 from .models import Engine,Start
 from .providers import PROVIDERS
 from .proofreading import fingerprint
@@ -22,6 +22,9 @@ def state(con,book_id):
     for row in con.execute('SELECT * FROM ai_jobs WHERE book_id=? AND owner_id=? ORDER BY created_at DESC',(book_id,em.OWNER)).fetchall():
         j=dict(row);j['config']=json.loads(j['config']);counts=dict(con.execute('SELECT status,COUNT(*) FROM ai_items WHERE job_id=? GROUP BY status',(j['id'],)))
         j.update(total=sum(counts.values()),done=counts.get('done',0),failed=counts.get('failed',0))
+        j['diagnostic_count']=con.execute('SELECT COUNT(*) FROM ai_failures WHERE job_id=?',(j['id'],)).fetchone()[0]
+        streak=con.execute('SELECT failures,stop_reason FROM ai_streaks WHERE job_id=?',(j['id'],)).fetchone()
+        j.update(consecutive_failures=streak[0] if streak else 0,stop_reason=streak[1] if streak else None)
         usage=con.execute('SELECT SUM(input_tokens),SUM(output_tokens),SUM(cost),SUM(CASE WHEN cost IS NULL THEN 1 ELSE 0 END) FROM ai_usage WHERE job_id=?',(j['id'],)).fetchone()
         j.update(input_tokens=usage[0] or 0,output_tokens=usage[1] or 0,cost=None if usage[3] else usage[2] or 0)
         j['errors']=[{'paragraph_id':r[0],'error':r[1]} for r in con.execute("SELECT paragraph_id,error FROM ai_items WHERE job_id=? AND status='failed'",(j['id'],))]
@@ -129,6 +132,14 @@ def install(app,database,load_book,snapshot,data_dir):
     def status(book_id:str):
         load_book(book_id)
         with database() as con:return state(con,book_id)
+    @app.get('/api/books/{book_id}/ai/jobs/{ident}/errors')
+    def job_errors(book_id:str,ident:str,offset:int=Query(default=0,ge=0)):
+        load_book(book_id)
+        with database() as con:return diagnostics.listing(con,book_id,ident,offset)
+    @app.get('/api/books/{book_id}/ai/jobs/{ident}/errors/{entry_id}')
+    def job_error_output(book_id:str,ident:str,entry_id:str):
+        load_book(book_id)
+        with database() as con:return diagnostics.output(con,book_id,ident,entry_id)
     @app.post('/api/books/{book_id}/ai/results/clear')
     def clear_results(book_id:str):
         load_book(book_id)

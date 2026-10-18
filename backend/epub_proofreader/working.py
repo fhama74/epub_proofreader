@@ -21,13 +21,15 @@ class WorkingFiles:
   current=dict(source.replacements) if isinstance(source,cls) else {}
   base=source.base if isinstance(source,cls) else source
   for path,value in (changes or {}).items():
-   if value is None:current.pop(path,None)
+   if value is None:
+    if path in baseline(base).files:current[path]=None
+    else:current.pop(path,None)
    else:current[path]=value
   return cls(base,tuple(sorted(current.items())))
  @cached_property
  def fingerprint(self):
   if not self.replacements:return sha256(self.base).hexdigest()
-  return sha256(json.dumps([sha256(self.base).hexdigest(),[(p,sha256(v).hexdigest()) for p,v in self.replacements]],ensure_ascii=False).encode()).hexdigest()
+  return sha256(json.dumps([sha256(self.base).hexdigest(),[(p,sha256(v).hexdigest() if v is not None else None) for p,v in self.replacements]],ensure_ascii=False).encode()).hexdigest()
  def model(self):return model(self)
  def materialize(self):
   from .editing import repack

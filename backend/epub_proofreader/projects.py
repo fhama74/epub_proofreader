@@ -100,11 +100,12 @@ def invalidate(con,book_id,value):
     if not value['history']:return
     meta=read(con,book_id);event=value['history'][-1];changed=False
     command=next((c for c in value['commands'] if c['id']==event.get('command_id',event['id'])),{})
-    split_insert=event['action']=='insert' and 'key' in command.get('snapshot',{})
-    chapter_move=event['action']=='chapter_split' or event['action'] in {'undo','redo'} and any(c['id']==event.get('command_id') and c['action']=='chapter_split' for c in value['commands'])
+    split_insert=event['action'] in {'insert','insert_boundary','blank'} and len(event['paragraph_ids'])==3
+    boundary_split=event['action']=='insert_boundary' and isinstance(command.get('after'),list)
+    chapter_move=event['action'] in {'chapter_split','chapter_merge'} or event['action'] in {'undo','redo'} and any(c['id']==event.get('command_id') and c['action'] in {'chapter_split','chapter_merge'} for c in value['commands'])
     options=command.get('chapter_options',{});right_id='paragraph-'+options.get('key','')
     chapter_cut=chapter_move and options.get('boundary',0)>0 and any(right_id in ids for name,ids in command.get('snapshot',{}).get('ids_after',{}).items() if not name.endswith(':headings'))
-    if event['action'] in {'split','merge','merge_next','undo','redo'} and not chapter_move or split_insert or chapter_cut:
+    if event['action'] in {'split','delete','merge','merge_next','undo','redo'} and not chapter_move or split_insert or chapter_cut or boundary_split:
         for pid in event['paragraph_ids']:
             if pid in meta.get('reviews',{}):meta['reviews'].pop(pid);changed=True
     book=editing.working_model(value);live={p['id'] for c in book.chapters for p in [*c['paragraphs'],*c.get('headings',[])]}
@@ -113,9 +114,9 @@ def invalidate(con,book_id,value):
             if pid not in live:meta[key].pop(pid);changed=True
     for pid in event['paragraph_ids']:
         if chapter_move and not chapter_cut:continue
-        if event['action']=='insert' and not split_insert and pid in meta['statuses']:continue
+        if event['action'] in {'insert','insert_boundary','blank'} and not split_insert and not boundary_split and pid in meta['statuses']:continue
         if meta['statuses'].get(pid,'unchecked')!='unchecked':meta['statuses'][pid]='review';changed=True
-    if event['action']=='split' and len(event['paragraph_ids'])==2:
+    if event['action'] in {'split','insert_boundary'} and len(event['paragraph_ids'])==2 and isinstance(command.get('after'),list):
         old,new=event['paragraph_ids']
         if old in meta['mappings']:meta['mappings'][new]=copy.deepcopy(meta['mappings'][old]);changed=True
     if event['action'] in {'merge','merge_next'} and len(event['paragraph_ids'])==2:
@@ -152,7 +153,17 @@ def replay(original,state):
         command_ids.add(command['id']);kind=command.get('action');pids=command.get('paragraph_ids')
         if not isinstance(pids,list) or not pids:raise EpubError('履歴の段落指定が不正です。')
         book=editing.working_model(value);changes=[]
-        if kind=='chapter_split':
+        if kind=='chapter_merge':
+            from .chapter_merge import merge as merge_chapter
+            rebuilt,expected,affected,before,after,focus=merge_chapter(book,pids[0])
+            if expected!=command.get('snapshot') or before!=command['before'] or after!=command['after'] or affected!=pids:raise EpubError('章統合の履歴が一致しません。')
+            value['working']=rebuilt;value['ids']=expected['ids_after']
+        elif kind in {'insert_boundary','blank','delete'}:
+            from .block_actions import change
+            rebuilt,expected,affected,before,after,focus,options=change(book,pids[0],kind,**command.get('block_options',{}))
+            if expected!=command.get('snapshot') or before!=command['before'] or after!=command['after'] or affected!=pids or options!=command.get('block_options'):raise EpubError('段落操作の履歴が一致しません。')
+            value['working']=rebuilt;value['ids'][expected['chapter_id']]=expected['ids_after']
+        elif kind=='chapter_split':
             from .chapters import split as chapter_split
             rebuilt,expected,affected,before,after,focus,options=chapter_split(book,pids[0],**command.get('chapter_options',{}))
             if expected!=command.get('snapshot') or before!=command['before'] or after!=command['after'] or options!=command.get('chapter_options'):raise EpubError('章作成の履歴が一致しません。')
@@ -212,7 +223,7 @@ def replay(original,state):
         editing.working_model(value)
         if number+1==cursor:at_cursor=copy.deepcopy(value)
     for event in history:
-        if not isinstance(event,dict) or event.get('action') not in {'text','sentence','ruby','combined','replace','insert','split','merge','merge_next','ruby_add','ruby_delete','chapter_split','undo','redo'} or not isinstance(event.get('id'),str):raise EpubError('操作履歴の形式が不正です。')
+        if not isinstance(event,dict) or event.get('action') not in {'text','sentence','ruby','combined','replace','insert','split','merge','merge_next','ruby_add','ruby_delete','chapter_split','chapter_merge','insert_boundary','blank','delete','undo','redo'} or not isinstance(event.get('id'),str):raise EpubError('操作履歴の形式が不正です。')
     result={**copy.deepcopy(state),**at_cursor}
     actual=editing.working_model(result)
     supplied=Book(result['working']).apply_ids(state.get('ids',{}))

@@ -81,7 +81,8 @@ def test_scopes_background_results_and_no_automatic_edit(session,mock_ai,scope,t
 def test_start_idempotence_active_job_and_reexecute_keep_results(session,mock_ai):
     c,create=session;root=create();body=request(c,root);r=c.post(root+'/ai/jobs',json=body).json();assert c.post(root+'/ai/jobs',json=body).json()==r
     assert c.post(root+'/ai/jobs',json=request(c,root)).status_code==409
-    finish(r['job_id']);ident=job(c,root);finish(ident);assert len(state(c,root)['results'])==2
+    finish(r['job_id']);ident=job(c,root);finish(ident);assert len(state(c,root)['results'])==1
+    assert state(c,root)['cleared_count']==1
 
 def test_approve_history_undo_redo_and_original(session,mock_ai):
     c,create=session;root=create();original=c.get(root+'/original').content;ident=job(c,root);finish(ident);cand=state(c,root)['results'][0]

@@ -46,7 +46,9 @@ def test_structure_uses_chapter_token_not_global_revision(session):
 def test_confirmation_and_update_skip_ai_independently_and_reset_keeps_edits(session,mock_ai):
     c,create=session;root=create()
     assert confirm(c,root).status_code==200
-    finish(job(c,root,skip_confirmed=True));assert not mock_ai
+    finish(job(c,root,skip_confirmed=True));assert len(mock_ai)==1
+    assert not details(c,root)['review_state']['body']['confirmed']
+    mock_ai.clear()
     assert c.post(root+'/review/reset',json={'scope':'paragraph','paragraph_id':P2,'target':'body'}).status_code==200
     finish(job(c,root,skip_confirmed=True));assert len(mock_ai)==1
     assert edit(c,root,P2,details(c,root)['editor_text']+'追記。').status_code==200
@@ -58,9 +60,9 @@ def test_confirmation_and_update_skip_ai_independently_and_reset_keeps_edits(ses
     # Body confirmation leaves ruby eligible; no ruby is sent after its own confirmation.
     assert confirm(c,root,P1).status_code==200
     mock_ai.clear();finish(job(c,root,paragraph_id=P1,skip_confirmed=True))
-    assert [p['query_type'] for p in mock_ai]==['ruby']
+    assert [p['query_type'] for p in mock_ai]==['body','ruby']
     assert confirm(c,root,P1,'ruby',0).status_code==200
-    mock_ai.clear();finish(job(c,root,paragraph_id=P1,skip_confirmed=True));assert not mock_ai
+    mock_ai.clear();finish(job(c,root,paragraph_id=P1,skip_confirmed=True));assert [p['query_type'] for p in mock_ai]==['body','ruby']
 
 
 def long_book():
@@ -72,8 +74,8 @@ def test_sentence_reviews_aggregate_and_omit_confirmed_sentences_from_queries(se
     assert d['unit_mode']=='sentence' and len(d['sentences'])==40
     assert confirm(c,root,P1,index=0).status_code==200
     s=details(c,root,P1)['review_state']['body'];assert s['done']==1 and not s['confirmed']
-    mock_ai.clear();finish(job(c,root,paragraph_id=P1,skip_confirmed=True))
-    assert sum(len(q['units']) for q in mock_ai)==39
+    mock_ai.clear();finish(job(c,root,'chapter',paragraph_id=P1,skip_confirmed=True))
+    assert sum(len(q['units']) for q in mock_ai if q['paragraph_id']==P1)==39
     assert all('start' not in u for q in mock_ai for u in q['units'])
     for i in range(1,40):assert confirm(c,root,P1,index=i).status_code==200
     assert details(c,root,P1)['review_state']['body']['confirmed']

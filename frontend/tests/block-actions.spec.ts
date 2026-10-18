@@ -6,7 +6,7 @@ for(const kind of ['章','段落'])for(const position of ['前','後']){
   await newProject(page,'navigation.epub');
   await page.getByLabel('次の段落・文',{exact:true}).click();await page.getByLabel('次の段落・文',{exact:true}).click();
   await expect(page.locator('.proof-position')).toContainText('文 2 / 40');
-  await expect(page.getByRole('region',{name:'章・段落処理',exact:true}).getByRole('button')).toHaveCount(6);
+  await expect(page.getByRole('region',{name:'章・段落処理',exact:true}).getByRole('button')).toHaveCount(8);
   await expect(page.locator('.inline-update').getByRole('button',{name:'カーソル位置で段落を二つに分ける',exact:true})).toBeVisible();
   await page.getByRole('button',{name:`現在の文の${position}に${kind}を追加`,exact:true}).click();
   const endpoint=kind==='章'?'/chapters/split':'/structure';

@@ -40,6 +40,7 @@ def database():
                 if column not in {row[1] for row in con.execute('PRAGMA table_info(books)')}:raise
     con.execute("CREATE TABLE IF NOT EXISTS publications (book_id TEXT NOT NULL REFERENCES books(id),version INTEGER NOT NULL,published_at TEXT NOT NULL,revision INTEGER NOT NULL,sha256 TEXT NOT NULL,epub BLOB NOT NULL,validation TEXT NOT NULL,request_id TEXT NOT NULL,PRIMARY KEY(book_id,version),UNIQUE(book_id,request_id))")
     con.execute("CREATE TABLE IF NOT EXISTS projects (book_id TEXT PRIMARY KEY REFERENCES books(id), metadata TEXT NOT NULL, pdf BLOB)")
+    con.execute("CREATE TABLE IF NOT EXISTS editing_removed(book_id TEXT NOT NULL REFERENCES books(id) ON DELETE CASCADE,path TEXT NOT NULL,PRIMARY KEY(book_id,path))")
     con.execute("CREATE TABLE IF NOT EXISTS editing_files(book_id TEXT NOT NULL REFERENCES books(id) ON DELETE CASCADE,path TEXT NOT NULL,content BLOB NOT NULL,PRIMARY KEY(book_id,path))")
     ai_schema.ensure(con)
     con.commit()
@@ -156,7 +157,7 @@ class CombinedRequest(TextRequest):
 class StructureRequest(RevisionRequest):
     expected_token: str | None = Field(default=None,min_length=64,max_length=64)
     expected_chapter_token: str | None = Field(default=None,min_length=64,max_length=64)
-    action: Literal['insert','split','merge','merge_next']
+    action: Literal['insert','split','merge','merge_next','insert_boundary','blank','delete','chapter_merge']
     paragraph_id: str = Field(max_length=128)
     position: Literal['before','after'] = 'after'
     text: str = Field(default='',max_length=20000)

@@ -10,6 +10,11 @@ class Reply:
     input_tokens:int|None=None
     output_tokens:int|None=None
 
+class ResponseFormatError(ValueError):
+    def __init__(self,message,output):
+        super().__init__(message)
+        self.output=output
+
 def schema(engine=None):
     value=copy.deepcopy((engine or {}).get('_response_schema') or Result.model_json_schema())
     def clean(v):
@@ -33,7 +38,9 @@ def request(engine,method,path,**kwargs):
                 for part in response.iter_bytes():
                     content.extend(part)
                     if len(content)>10*1024*1024:raise ValueError('AIの応答が大きすぎます。')
-                return json.loads(content)
+                try:return json.loads(content)
+                except (json.JSONDecodeError,UnicodeDecodeError):
+                    raise ResponseFormatError('AI接続先から不正なJSONが返りました。',content.decode('utf-8',errors='replace')) from None
     except (httpx.ConnectError,httpx.ConnectTimeout):raise ValueError('接続エラー：AIサービスに接続できません。サービスの起動状態・接続先・ネットワークを確認してください。') from None
     except httpx.TimeoutException:raise ValueError('AIから応答がありません。処理の長期化、サービス停止、通信断の可能性があります。') from None
     except httpx.HTTPError:raise ValueError('AIへ接続できません。URL・ネットワーク・Tailscaleの接続を確認してください。') from None

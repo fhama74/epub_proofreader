@@ -214,7 +214,7 @@ def structure(tree):
 def validate_export(original, working, commands=()):
     result = repack(working.original)
     checked = Book(result)
-    if any(c.get('action')=='chapter_split' for c in commands):
+    if any(c.get('action') in {'chapter_split','chapter_merge','delete'} for c in commands):
         return validate_chapter_export(original,checked,result,commands)
     if set(original.files) != set(checked.files):
         raise EpubError('出力検証: EPUB内のファイル一覧が変化しています。')
@@ -240,8 +240,10 @@ def validate_chapter_export(original,checked,result,commands):
     expected_files=dict(original.files)
     for command in commands:
         snapshot=command.get('snapshot',{})
-        if command.get('action')=='chapter_split':
-            for path,data in snapshot['after_files'].items():expected_files[path]=decoded(data)
+        if command.get('action') in {'chapter_split','chapter_merge'}:
+            for path,data in snapshot['after_files'].items():
+                if data is None:expected_files[path]=None
+                else:expected_files[path]=decoded(data)
         elif 'file' in snapshot:expected_files[snapshot['file']]=decoded(snapshot['after_file'])
     expected=Book(repack(original.original,expected_files))
     if set(expected.files)!=set(checked.files):raise EpubError('出力検証: 章作成の履歴とファイル一覧が一致しません。')
@@ -266,7 +268,7 @@ def state(con, book_id):
         if row is None:
             raise EpubError('書籍がありません。')
         return {'working':initial_working(row[0]), 'revision':0, 'commands':[], 'cursor':0, 'history':[], 'ids':{}}
-    files=tuple(con.execute('SELECT path,content FROM editing_files WHERE book_id=? ORDER BY path',(book_id,)).fetchall())
+    files=tuple(sorted([*((p,data) for p,data in con.execute('SELECT path,content FROM editing_files WHERE book_id=?',(book_id,))),*((p,None) for p, in con.execute('SELECT path FROM editing_removed WHERE book_id=?',(book_id,)))]))
     return {'working':WorkingFiles(row[0],files),'_stored_base':row[0], 'revision':row[1], 'commands':json.loads(row[2]), 'cursor':row[3], 'history':json.loads(row[4]), 'ids':json.loads(row[5])}
 
 @lru_cache(maxsize=4)
@@ -288,6 +290,11 @@ def save_state(con, book_id, value):
     else:
         con.execute('INSERT INTO editing (book_id,working,revision,commands,cursor,history,ids) VALUES (?,?,?,?,?,?,?) ON CONFLICT(book_id) DO UPDATE SET working=excluded.working,revision=excluded.revision,commands=excluded.commands,cursor=excluded.cursor,history=excluded.history,ids=excluded.ids',(book_id,base,*fields))
     desired=dict(value['working'].replacements) if isinstance(value['working'],WorkingFiles) else {}
+    removed={p for p,v in desired.items() if v is None}
+    old_removed={p for p, in con.execute('SELECT path FROM editing_removed WHERE book_id=?',(book_id,))}
+    for p in old_removed-removed:con.execute('DELETE FROM editing_removed WHERE book_id=? AND path=?',(book_id,p))
+    for p in removed-old_removed:con.execute('INSERT INTO editing_removed VALUES (?,?)',(book_id,p))
+    desired={p:v for p,v in desired.items() if v is not None}
     existing=dict(con.execute('SELECT path,content FROM editing_files WHERE book_id=?',(book_id,)))
     for path in existing.keys()-desired.keys():con.execute('DELETE FROM editing_files WHERE book_id=? AND path=?',(book_id,path))
     for path,content in desired.items():
@@ -311,7 +318,7 @@ def commit_edit(con, book_id, revision, kind, paragraph_id=None, text=None, ruby
             raise EpubError('元に戻す・やり直す操作がありません。')
         command = value['commands'][index]
         if not command.get('undoable',True):raise EditConflict('ルビの追加・削除はUndo／Redoの対象外です。その操作より前には戻せません。')
-        if command['action']=='chapter_split':
+        if command['action'] in {'chapter_split','chapter_merge'}:
             from .chapters import apply_snapshot
             value['working']=apply_snapshot(book,command['snapshot'],reverse)
             value['ids']=copy.deepcopy(command['snapshot']['ids_before' if reverse else 'ids_after'])
@@ -334,7 +341,22 @@ def commit_edit(con, book_id, revision, kind, paragraph_id=None, text=None, ruby
         snapshot=None
         ruby_options=None
         chapter_options=None
-        if kind=='chapter_split':
+        block_options=None
+        if kind=='chapter_merge':
+            from .chapter_merge import merge as merge_chapter
+            value['working'],snapshot,paragraphs,before,after,focus=merge_chapter(book,paragraph_id)
+            value['ids']=snapshot['ids_after'];value['focus_id']=focus;changes=[]
+        elif kind in {'insert_boundary','blank','delete'}:
+            from .block_actions import change
+            boundary=start=end=None
+            if sentence_index is not None:
+                d=paragraph_details(book,paragraph_id,value['revision'])
+                if not 0<=sentence_index<len(d['sentences']):raise EpubError('選択した文が見つかりません。')
+                span=d['sentences'][sentence_index];start,end=span['start'],span['end']
+                if kind!='delete':boundary=start if position=='before' else end;start=end=None
+            value['working'],snapshot,paragraphs,before,after,focus,block_options=change(book,paragraph_id,kind,position=position,text=text or '',boundary=boundary,start=start,end=end)
+            value['ids'][snapshot['chapter_id']]=snapshot['ids_after'];value['focus_id']=focus;changes=[]
+        elif kind=='chapter_split':
             from .chapters import split as chapter_split
             boundary=None
             if chapter_position is not None:
@@ -431,6 +453,7 @@ def commit_edit(con, book_id, revision, kind, paragraph_id=None, text=None, ruby
         command = {'id':str(uuid.uuid4()), 'timestamp':timestamp(), 'action':kind, 'changes':changes, 'paragraph_ids':paragraphs, 'before':before, 'after':after, 'source':source, 'state':'approved', 'reason':reason}
         if ruby_options is not None:command.update(undoable=False,ruby_options=ruby_options)
         if chapter_options is not None:command['chapter_options']=chapter_options
+        if block_options is not None:command['block_options']=block_options
         if candidate_id:command.update(candidate_id=candidate_id,engine_id=engine_id)
         if snapshot is not None:command['snapshot']=snapshot
         value['commands'] = value['commands'][:value['cursor']] + [command]

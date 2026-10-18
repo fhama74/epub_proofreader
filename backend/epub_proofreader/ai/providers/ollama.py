@@ -1,4 +1,5 @@
-from .base import Reply,request,schema
+from .base import Reply,request,schema,ResponseFormatError
+import json
 
 
 def body_schema(e):
@@ -20,6 +21,8 @@ def generate(e,system,prompt):
         # Old Ollama versions may reject even this small bound. Only retry the
         # rejected request; incoming candidates still undergo strict validation.
         payload={**payload,'format':compatible};r=request(e,'POST','/api/chat',json=payload)
+    if not isinstance(r,dict) or not isinstance(r.get('message'),dict) or not isinstance(r['message'].get('content'),str):
+        raise ResponseFormatError('AIの応答形式が不正です。Ollamaのmessage.contentがありません。',json.dumps(r,ensure_ascii=False))
     return Reply(r['message']['content'],r.get('prompt_eval_count'),r.get('eval_count'))
 
 
