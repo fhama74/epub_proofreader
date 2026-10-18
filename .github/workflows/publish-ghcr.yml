@@ -1,130 +1,85 @@
-name: Publish GHCR image
+name: Preserve published v0.1 baseline
 on:
   workflow_dispatch:
-  push:
-    tags: ['v*']
 permissions:
-  contents: read
+  contents: write
+  packages: write
 concurrency:
-  group: ghcr-publication
+  group: preserve-v01-baseline
   cancel-in-progress: false
 env:
   IMAGE: ghcr.io/fhama74/epub_proofreader
-  SOURCE_RELEASE: container-${{ github.sha }}
+  SOURCE_SHA: 06101a6c5610428ae48f2880adbba20a02f94058
+  IMAGE_DIGEST: sha256:6f069537bf4f7cca525d54021ebea917af6b8d8a56b691ec39e726147d0d4639
+  GH_TOKEN: ${{ github.token }}
+  GH_REPO: fhama74/epub_proofreader
 jobs:
-  prepare:
+  preserve:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
-        with:
-          python-version: '3.14'
-      - run: uv sync --locked && uv run pytest -q
-      - name: Prepare corresponding-source release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          if ! gh release view "$SOURCE_RELEASE" > /dev/null 2>&1; then
-            gh release create "$SOURCE_RELEASE" --target "$GITHUB_SHA" --draft --title "Container sources ${GITHUB_SHA:0:12}" --notes-file docs/CONTAINER_SOURCES.md
-          fi
-  build:
-    needs: prepare
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - arch: amd64
-            runner: ubuntu-latest
-          - arch: arm64
-            runner: ubuntu-24.04-arm
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 45
-    permissions:
-      contents: write
-      packages: write
-    env:
-      EPROOF_IMAGE: local/epub-proofreader:publication
-    steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
-      - name: Build the native image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          load: true
-          tags: ${{ env.EPROOF_IMAGE }}
-          build-args: APP_REVISION=${{ github.sha }}
-          cache-from: type=gha,scope=ghcr-${{ matrix.arch }}
-          cache-to: type=gha,mode=max,scope=ghcr-${{ matrix.arch }}
-      - name: Test image-only setup, PDF assets and EPUBCheck
-        run: |
-          docker compose -f compose.ghcr.yaml up -d --wait --wait-timeout 120
-          python3 scripts/docker_smoke.py --state /tmp/eproof-ghcr-smoke.json --create
-          sudo sha256sum secrets/ai_secret_key > /tmp/key.sha256
-          docker compose -f compose.ghcr.yaml down
-          docker compose -f compose.ghcr.yaml up -d --wait --wait-timeout 120
-          sudo sha256sum --check /tmp/key.sha256
-          python3 scripts/docker_smoke.py --state /tmp/eproof-ghcr-smoke.json
-      - name: Collect matching sources and notices
-        run: |
-          mkdir -p container-sources
-          docker run --rm --entrypoint .venv/bin/python -v "$PWD/scripts/collect_container_sources.py:/collect.py:ro" -v "$PWD/container-sources:/sources" "$EPROOF_IMAGE" /collect.py --output /sources
-          sudo tar -czf "container-sources-${{ matrix.arch }}.tar.gz" -C container-sources .
-          sha256sum "container-sources-${{ matrix.arch }}.tar.gz" > "container-sources-${{ matrix.arch }}.sha256"
-      - name: Upload source archive before publishing the binary
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh release upload "$SOURCE_RELEASE" "container-sources-${{ matrix.arch }}.tar.gz" "container-sources-${{ matrix.arch }}.sha256" --clobber
-      - uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Push tested image
-        run: |
-          docker tag "$EPROOF_IMAGE" "$IMAGE:sha-$GITHUB_SHA-${{ matrix.arch }}"
-          docker push "$IMAGE:sha-$GITHUB_SHA-${{ matrix.arch }}"
-      - name: Container logs
-        if: failure()
-        run: docker compose -f compose.ghcr.yaml logs --no-color --tail 100
-      - name: Stop test containers
-        if: always()
-        run: docker compose -f compose.ghcr.yaml down
-  publish:
-    needs: build
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      packages: write
-    steps:
-      - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Make matching source archives available
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh release edit "$SOURCE_RELEASE" --draft=false --latest=false
-      - name: Publish multi-platform tags
+          password: ${{ github.token }}
+      - name: Preserve the existing multi-platform image without rebuilding
         run: |
-          tags=(--tag "$IMAGE:latest" --tag "$IMAGE:sha-$GITHUB_SHA")
-          if [[ "$GITHUB_REF_TYPE" == tag ]]; then
-            tags+=(--tag "$IMAGE:${GITHUB_REF_NAME#v}")
+          set -euo pipefail
+          if docker buildx imagetools inspect "$IMAGE:0.1" >/dev/null 2>&1; then
+            existing=$(docker buildx imagetools inspect "$IMAGE:0.1" --format '{{.Manifest.Digest}}')
+            test "$existing" = "$IMAGE_DIGEST"
+          else
+            docker buildx imagetools create --tag "$IMAGE:0.1" "$IMAGE@$IMAGE_DIGEST"
           fi
-          docker buildx imagetools create "${tags[@]}" "$IMAGE:sha-$GITHUB_SHA-amd64" "$IMAGE:sha-$GITHUB_SHA-arm64"
-          docker buildx imagetools inspect "$IMAGE:sha-$GITHUB_SHA"
-      - name: Pull published image and recheck operation
-        env:
-          EPROOF_IMAGE: ghcr.io/fhama74/epub_proofreader:sha-${{ github.sha }}
+          actual=$(docker buildx imagetools inspect "$IMAGE:0.1" --format '{{.Manifest.Digest}}')
+          test "$actual" = "$IMAGE_DIGEST"
+          docker buildx imagetools inspect "$IMAGE:0.1"
+      - name: Prepare pinned Compose and baseline record
         run: |
-          docker compose -f compose.ghcr.yaml pull
-          docker compose -f compose.ghcr.yaml up -d --wait --wait-timeout 120
-          python3 scripts/docker_smoke.py --state /tmp/eproof-published.json --create
-      - name: Stop verification containers
-        if: always()
-        run: docker compose -f compose.ghcr.yaml down
+          python3 - <<'PY'
+          import json,os,urllib.request,datetime
+          from pathlib import Path
+          sha=os.environ['SOURCE_SHA'];image=os.environ['IMAGE'];digest=os.environ['IMAGE_DIGEST']
+          with urllib.request.urlopen(f'https://raw.githubusercontent.com/fhama74/epub_proofreader/{sha}/compose.ghcr.yaml') as r:compose=r.read().decode()
+          assert compose.count(image+':latest')==2
+          Path('compose.v0.1.yaml').write_text(compose.replace(image+':latest',image+'@'+digest))
+          record=dict(version='0.1',source_commit=sha,image=image+':0.1',image_digest=digest,platforms=['linux/amd64','linux/arm64'],preserved_at=datetime.datetime.now(datetime.timezone.utc).isoformat(),component_sources=f'https://github.com/fhama74/epub_proofreader/releases/tag/container-{sha}')
+          Path('baseline-v0.1.json').write_text(json.dumps(record,indent=2)+'\n')
+          PY
+          cat > release-notes.md <<'NOTES'
+          性能比較用に、2026年10月19日時点の公開版を0.1として固定しました。
+
+          - ソース: `06101a6c5610428ae48f2880adbba20a02f94058`
+          - Docker: `ghcr.io/fhama74/epub_proofreader:0.1`
+          - 固定イメージ: `ghcr.io/fhama74/epub_proofreader@sha256:6f069537bf4f7cca525d54021ebea917af6b8d8a56b691ec39e726147d0d4639`
+          - 対応: linux/amd64、linux/arm64
+          - 既存イメージをそのまま保存しています。再ビルドはしていません。
+          - 直近のローカル開発中のDB管理・校正進捗などの変更は含みません。アプリ内部の旧バージョン表示はそのままです。
+
+          空の専用フォルダーで次を実行すると、この版を起動できます。
+
+          ```sh
+          curl -fL https://github.com/fhama74/epub_proofreader/releases/download/v0.1/compose.v0.1.yaml -o compose.yaml
+          docker compose pull
+          docker compose up -d
+          ```
+
+          添付Composeはイメージのダイジェストを固定しています。比較時は別の保存先とポートを使い、同じEPUB・AIモデル・プロンプト・検査範囲・校閲状態で実施してください。
+
+          [同梱コンポーネントの対応ソースとライセンス情報](https://github.com/fhama74/epub_proofreader/releases/tag/container-06101a6c5610428ae48f2880adbba20a02f94058)
+          NOTES
+      - name: Publish the matching source release and pinned assets
+        run: |
+          set -euo pipefail
+          if gh api "repos/$GH_REPO/git/ref/tags/v0.1" >/dev/null 2>&1; then
+            test "$(gh api "repos/$GH_REPO/git/ref/tags/v0.1" --jq .object.sha)" = "$SOURCE_SHA"
+          else
+            gh api "repos/$GH_REPO/git/refs" -f ref=refs/tags/v0.1 -f sha="$SOURCE_SHA"
+          fi
+          if ! gh release view v0.1 >/dev/null 2>&1; then
+            gh release create v0.1 --verify-tag --draft --title 'EPUB Proofreader 0.1' --notes-file release-notes.md
+          fi
+          gh release upload v0.1 compose.v0.1.yaml baseline-v0.1.json --clobber
+          gh release edit v0.1 --draft=false --latest=true
