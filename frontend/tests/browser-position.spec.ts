@@ -15,6 +15,9 @@ test('browser positions survive a new session and another browser updating the p
     return [record?.view?.paragraphId,record?.view?.pdf?.page];
   },id)).toEqual(['chapter0001-p00002',2]);
   const browserA=await page.context().storageState();
+  // Release the old session's editing lease before restoring that selection.
+  const released=page.waitForResponse(r=>r.url().endsWith('/paragraphs/chapter0001-p00002/lock') && r.request().method()==='DELETE');
+  await page.getByRole('button',{name:'読書表示',exact:true}).click();await released;
   const other=await browser.newContext({baseURL,viewport:{width:1440,height:960}});
   const reopened=await browser.newContext({baseURL,viewport:{width:1440,height:960},storageState:browserA});
   try{
@@ -29,7 +32,8 @@ test('browser positions survive a new session and another browser updating the p
     const unchanged=await (await second.request.get(projectPath)).json();
     expect(unchanged.version).toBe(initial.version);
     expect(unchanged.view).toEqual(initial.view);
-    const response=await second.request.patch(projectPath,{data:{version:unchanged.version,statuses:{'chapter0002-p00001':'human_checked'}}});
+    const owner=await second.evaluate(()=>sessionStorage.getItem('eproof-edit-owner'));
+    const response=await second.request.patch(projectPath,{headers:{'X-Edit-Owner':owner!},data:{version:unchanged.version,statuses:{'chapter0002-p00001':'human_checked'}}});
     expect(response.ok()).toBe(true);
     // A new browser session retains A's own selection and PDF page, even after B's write.
     const firstAgain=await reopened.newPage();await firstAgain.goto('/');
