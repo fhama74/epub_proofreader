@@ -40,6 +40,9 @@ def model(source):
  key=sha256(source.base).digest();base=baseline(source.base)
  previous=recent.get(key)
  current=dict(source.replacements)
+ # A new upload or a complete Undo is the exact baseline, even when another
+ # project with identical bytes most recently populated the incremental cache.
+ if not current:previous=None
  if previous:
   old,book=previous;prior=dict(old.replacements)
   changes={p:current.get(p,base.files.get(p)) for p in current.keys()|prior.keys() if current.get(p,base.files.get(p))!=prior.get(p,base.files.get(p))}

@@ -11,6 +11,22 @@ def clear_models():
  editing.cached_model.cache_clear();model.cache_clear();baseline.cache_clear();recent.clear()
 
 
+def test_fresh_identical_upload_previews_after_split_merge_insert_and_undo(session):
+ from pathlib import Path
+ c,create=session;data=(Path(__file__).resolve().parents[2]/'samples/navigation.epub').read_bytes();root=create(data)
+ def act(action,**options):
+  d=details(c,root);r=c.post(root+'/structure',json={'revision':d['revision'],'paragraph_id':P2,'action':action,**options});assert r.status_code==200,r.text;return r.json()
+ b=act('split',offset=len(details(c,root)['sentences'][0]['text']))
+ new=b['focus_paragraph_id'];d=details(c,root,new)
+ r=c.post(root+'/structure',json={'revision':d['revision'],'paragraph_id':new,'action':'merge'});assert r.status_code==200,r.text
+ act('insert_boundary',position='after',sentence_index=0,text='追加。')
+ assert c.post(root+'/undo',json={'revision':3}).status_code==200
+ assert c.post(root+'/redo',json={'revision':4}).status_code==200
+ fresh=create(data)
+ assert c.get(fresh+'/chapters/chapter0001').status_code==200
+ assert c.get(root+'/chapters/chapter0001').status_code==200
+
+
 def test_edit_preview_undo_redo_never_repack_and_only_analyze_changed_chapter(session,monkeypatch):
  c,create=session;root=create();before=details(c,root);original=c.get(root+'/original').content
  seen=[];original_analyze=Book.analyze_chapter
