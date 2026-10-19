@@ -68,7 +68,7 @@ test('sentence navigation and persistent paragraph split, merge and insertion',a
   await page.getByRole('button',{name:'段落を統合して再計算',exact:true}).click();
   await expect(page.locator('.proof-position')).toContainText('/ 3');
   await expect(page.getByRole('dialog',{name:'段落の挿入・結合'})).toHaveCount(0);
-  await page.locator('.info-pane').getByRole('button',{name:'現在の文の後に段落を追加',exact:true}).click();
+  await page.locator('.info-pane').getByRole('button',{name:'後に段落を追加',exact:true}).click();
   await page.getByLabel('挿入する本文',{exact:true}).fill('補完した本文。');
   await page.getByRole('button',{name:'段落を挿入して再計算',exact:true}).click();
   await expect(page.locator('.proof-position')).toContainText('/ 5');
@@ -84,7 +84,7 @@ test('proof controls live in pane 03 and selected sentences stay in view',async(
   await expect(page.locator('.epub-pane .unit-controls')).toHaveCount(0);
   await expect(page.locator('.info-pane').getByLabel('次の段落・文',{exact:true})).toHaveCount(1);
 
-  await expect(page.locator('.info-pane').getByRole('button',{name:'現在の文の後に段落を追加',exact:true})).toBeVisible();
+  await expect(page.locator('.info-pane').getByRole('button',{name:'後に段落を追加',exact:true})).toBeVisible();
   for(const direction of [1,1,1,1,1,1,1,1,1,1,1,1,-1,-1,-1]){
     await page.getByLabel(direction>0?'次の段落・文':'前の段落・文',{exact:true}).click();
     await expect.poll(()=>page.frameLocator('iframe').locator('html').evaluate(root=>{

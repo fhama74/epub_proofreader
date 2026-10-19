@@ -69,3 +69,49 @@ footer .proof-score{margin-left:auto}
 
 .app footer,.app.reader-mode footer,.app.reader-mode:not(.reader-editing) footer{height:auto;min-height:26px;flex-wrap:wrap}
 .app footer>.proof-score{overflow:visible;white-space:normal}
+
+/* Project identity and view controls share the title bar. */
+.app header.workspace-header,.app.reader-mode header.workspace-header{
+ display:grid;grid-template-columns:auto minmax(0,1fr) auto auto;align-items:center;
+ height:auto;min-height:48px;flex-shrink:0;padding:5px 12px;gap:8px;
+}
+.workspace-header .brand{flex:none;min-width:0}
+.workspace-header .project-summary{display:flex;align-items:center;gap:5px;min-width:0;color:#f4f6ed}
+.workspace-header .project-summary>strong,.workspace-header .project-summary>span{
+ border:1px solid #f3f5e877;background:#ffffff09;border-radius:4px;padding:5px 7px;
+ color:#f4f6ed;line-height:1.2;
+}
+.workspace-header .project-summary>strong{font-size:13px;font-weight:500}
+.workspace-header .project-date,.workspace-header .project-version{font-size:10px}
+.header-view-controls{min-width:0}
+.workspace-header .reader-toolbar,.workspace-header .view-toggles{display:flex;align-items:center;gap:5px;flex-wrap:nowrap}
+.workspace-header .reader-toolbar button,.workspace-header .view-toggles button{
+ background:transparent;border-color:#f3f5e877;color:#f4f6ed;font-size:12px;
+ padding:5px 8px;min-height:34px;white-space:nowrap;
+}
+.workspace-header .reader-toolbar button[aria-pressed=true],.workspace-header .view-toggles button[aria-pressed=true]{background:#f3f5e824}
+.workspace-header .reader-toolbar button:hover,.workspace-header .view-toggles button:hover{background:#f3f5e824}
+.workspace-header .workspace-menu{margin-left:0}
+.workspace-header .workspace-menu>summary{min-height:34px;padding:5px 10px}
+.block-action-grid{grid-template-columns:repeat(auto-fit,minmax(105px,1fr));gap:5px}
+.block-action-grid button,.reader-mode .block-action-grid button{padding:6px 7px;font-size:12px;line-height:1.3;min-height:36px}
+.reader-mode .block-action-grid button{min-height:44px}
+@media(max-width:800px){
+ .app header.workspace-header,.app.reader-mode header.workspace-header{grid-template-columns:auto minmax(0,1fr) auto;row-gap:5px}
+ .workspace-header .header-view-controls{grid-column:1/-1;grid-row:2}
+ .workspace-header .workspace-menu{grid-column:3;grid-row:1}
+ .workspace-header .reader-toolbar,.workspace-header .view-toggles{justify-content:flex-end}
+}
+@media(max-width:600px){
+ .app header.workspace-header,.app.reader-mode header.workspace-header{padding:4px 8px;gap:4px 6px;min-height:44px}
+ .workspace-header .brand h1{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip-path:inset(50%)}
+ .app .workspace-header .brand .logo{font-size:17px;padding:1px 5px}
+ .workspace-header .project-summary{gap:3px}
+ .workspace-header .project-summary>strong,.workspace-header .project-summary>span{padding:5px 4px}
+ .workspace-header .project-summary>strong{font-size:11px}
+ .workspace-header .project-date,.workspace-header .project-version{font-size:9px}
+ .workspace-header .project-summary .project-date{max-width:none;overflow:visible}
+ .workspace-header .workspace-menu>summary{font-size:12px;min-height:36px;padding:5px 7px}
+ .workspace-header .reader-toolbar,.workspace-header .view-toggles{width:100%;gap:4px}
+ .workspace-header .reader-toolbar button,.workspace-header .view-toggles button{flex:1;min-width:0;min-height:40px;font-size:12px;padding:4px}
+}

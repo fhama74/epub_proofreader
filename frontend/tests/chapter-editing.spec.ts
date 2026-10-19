@@ -6,12 +6,12 @@ test('insert after a heading, split a chapter and persist the chapter creation',
  await page.frameLocator('iframe').getByText('第一章　午後の庭',{exact:true}).click();
  await expect(page.getByLabel('本文を編集',{exact:true})).toHaveValue('第一章　午後の庭');
 
- const insert=page.getByRole('button',{name:'現在の文の後に段落を追加',exact:true});await expect(insert).toBeEnabled();await insert.click();
+ const insert=page.getByRole('button',{name:'後に段落を追加',exact:true});await expect(insert).toBeEnabled();await insert.click();
  const dialog=page.getByRole('dialog',{name:'段落の挿入・結合',exact:true});
  await dialog.getByLabel('挿入する本文',{exact:true}).fill('追加した段落。');
  await dialog.getByRole('button',{name:'段落を挿入して再計算',exact:true}).click();
  await expect(dialog).toHaveCount(0);await expect(page.getByLabel('本文を編集',{exact:true})).toHaveValue('追加した段落。');
- await page.getByRole('button',{name:'現在の文の前に章を追加',exact:true}).click();
+ await page.getByRole('button',{name:'前に章を追加',exact:true}).click();
  const chapter=page.getByRole('dialog',{name:'新しい章を作成',exact:true});await chapter.getByLabel('新しい章名',{exact:true}).fill('追加した章');
  await expect(chapter.getByLabel('章のレベル',{exact:true}).locator('option')).toHaveCount(6);
  await chapter.getByLabel('章のレベル',{exact:true}).selectOption('2');

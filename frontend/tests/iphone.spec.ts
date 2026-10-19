@@ -3,9 +3,11 @@ import {newProject,openActions,menuAction} from './helpers';
 test.use({viewport:{width:390,height:844},hasTouch:true});
 test('phone has one-line project identity, a compact title and top operation menu',async({page})=>{
  await newProject(page);
- await expect.poll(()=>page.locator('header').evaluate(el=>el.getBoundingClientRect().height)).toBeLessThanOrEqual(48);
+ await expect.poll(()=>page.locator('header').evaluate(el=>el.getBoundingClientRect().height)).toBeLessThanOrEqual(100);
  await expect(page.getByText('原本と、一文字ずつ。',{exact:true})).toHaveCount(0);
- const positions=await page.locator('.project-summary').evaluate(el=>Array.from(el.children).map(e=>e.getBoundingClientRect().top));expect(Math.max(...positions)-Math.min(...positions)).toBeLessThan(8);
+ await expect(page.locator('header .project-summary')).toBeVisible();
+ await expect(page.locator('.bookbar')).toHaveCount(0);
+ const positions=await page.locator('.project-summary').evaluate(el=>Array.from(el.children).map(e=>{const r=e.getBoundingClientRect();return r.top+r.height/2;}));expect(Math.max(...positions)-Math.min(...positions)).toBeLessThan(3);
  await expect(page.locator('footer button')).toHaveCount(0);await openActions(page);
  await expect(page.getByRole('button',{name:'EPUB発行',exact:true})).toBeVisible();
  await expect.poll(()=>page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);

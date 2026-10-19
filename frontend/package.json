@@ -9,7 +9,7 @@
     "test:e2e": "playwright test",
     "test:pdf": "node scripts/prepare-pdf-assets.mjs && node --test scripts/pdf-render.test.mjs",
     "test:diff": "node --test scripts/text-diff.test.mjs",
-    "test:ai": "node --test scripts/ai-navigation.test.mjs scripts/review-state.test.mjs scripts/api-client.test.mjs scripts/body-proposal.test.mjs scripts/review-receipt.test.mjs scripts/unit-patch.test.mjs scripts/project-progress.test.mjs",
+    "test:ai": "node --test scripts/ai-navigation.test.mjs scripts/review-state.test.mjs scripts/api-client.test.mjs scripts/body-proposal.test.mjs scripts/review-receipt.test.mjs scripts/unit-patch.test.mjs scripts/project-progress.test.mjs scripts/proof-navigation.test.mjs",
     "test:alignment": "node --test scripts/pdf-alignment.test.mjs scripts/request-id.test.mjs scripts/proof-selection.test.mjs scripts/pdf-gesture.test.mjs scripts/reader-position.test.mjs"
   },
   "dependencies": {
